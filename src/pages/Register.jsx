@@ -1,0 +1,94 @@
+import { Button, Card, ConfigProvider, Form, Input, Radio, Typography } from 'antd'
+import { useState } from 'react'
+import { USER_ROLES } from '../constants/index.js'
+import loginBg from '../assets/登录注册背景.png'
+
+const { Title } = Typography
+
+function Register() {
+  const [loading, setLoading] = useState(false)
+
+  const handleFinish = (values) => {
+    setLoading(true)
+    // TODO: 接入 register 接口
+    // console.log('Register submit:', values)
+    setTimeout(() => {
+      setLoading(false)
+    }, 500)
+  }
+
+  return (
+    <ConfigProvider
+      theme={{
+        token: {
+          colorPrimary: '#FFB300',
+        },
+        components: {
+          Radio: {
+            colorPrimary: '#FFB300',
+          },
+        },
+      }}
+    >
+      <div
+        className="page-register"
+        style={{
+          minHeight: '100vh',
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundImage: `url(${loginBg})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundRepeat: 'no-repeat',
+        }}
+      >
+        <Card
+          style={{
+            width: 460,
+            backdropFilter: 'blur(14px)',
+            backgroundColor: 'rgba(255, 255, 255, 0.18)',
+            borderColor: 'rgba(255, 255, 255, 0.45)',
+            boxShadow: '0 18px 45px rgba(0, 0, 0, 0.35)',
+          }}
+        >
+          <Title level={3} style={{ textAlign: 'center', marginBottom: 24 }}>
+            易宿酒店管理后台 - 注册
+          </Title>
+          <Form layout="vertical" onFinish={handleFinish} initialValues={{ role: USER_ROLES.MERCHANT }}>
+            <Form.Item label="用户名" name="username" rules={[{ required: true, message: '请输入用户名' }]}>
+              <Input placeholder="请输入用户名" />
+            </Form.Item>
+            <Form.Item label="密码" name="password" rules={[{ required: true, message: '请输入密码' }]}>
+              <Input.Password placeholder="请输入密码" />
+            </Form.Item>
+            <Form.Item label="确认密码" name="confirmPassword" rules={[{ required: true, message: '请再次输入密码' }]}>
+              <Input.Password placeholder="请再次输入密码" />
+            </Form.Item>
+            <Form.Item label="角色" name="role" rules={[{ required: true, message: '请选择角色' }]}>
+              <Radio.Group>
+                <Radio value={USER_ROLES.MERCHANT}>商户</Radio>
+                <Radio value={USER_ROLES.ADMIN}>管理员</Radio>
+              </Radio.Group>
+            </Form.Item>
+            <Form.Item>
+              <Button
+                type="primary"
+                htmlType="submit"
+                block
+                loading={loading}
+                style={{ backgroundColor: '#FFB300', borderColor: '#FFB300' }}
+              >
+                注册（占位）
+              </Button>
+            </Form.Item>
+          </Form>
+        </Card>
+      </div>
+    </ConfigProvider>
+  )
+}
+
+export default Register
+
