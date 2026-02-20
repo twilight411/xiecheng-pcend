@@ -1,5 +1,6 @@
 import { Button, Card, ConfigProvider, Form, Input, Radio, Typography } from 'antd'
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { USER_ROLES } from '../constants/index.js'
 import loginBg from '../assets/登录注册背景.png'
 
@@ -7,14 +8,18 @@ const { Title } = Typography
 
 function Login() {
   const [loading, setLoading] = useState(false)
+  const navigate = useNavigate()
 
   const handleFinish = (values) => {
+    // 暂时不做真实登录校验，直接根据角色跳转到对应可见页面
+    const role = values.role || USER_ROLES.MERCHANT
     setLoading(true)
-    // 这里先占位，后续接入真实 login 接口与跳转逻辑
-    // console.log('Login submit:', values)
-    setTimeout(() => {
-      setLoading(false)
-    }, 500)
+    if (role === USER_ROLES.ADMIN) {
+      navigate('/admin/review')
+    } else {
+      navigate('/merchant')
+    }
+    setLoading(false)
   }
 
   return (
