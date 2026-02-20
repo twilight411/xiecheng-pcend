@@ -1,20 +1,100 @@
-import { Button, Card, Col, DatePicker, Divider, Form, Input, InputNumber, Row, Select, Space, Tag, Typography, Upload } from 'antd'
-import { PlusOutlined, UploadOutlined } from '@ant-design/icons'
+import { Button, Card, Col, DatePicker, Divider, Form, Input, InputNumber, Row, Select, Space, Tag, Typography, Upload, message } from 'antd'
+import { UploadOutlined } from '@ant-design/icons'
+import dayjs from 'dayjs'
+import { useEffect, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { createHotel, updateHotel, fetchHotelDetail } from '../services/hotel.js'
 
 const { Title, Paragraph, Text } = Typography
 const { TextArea } = Input
 const { Option } = Select
 
-function HotelEdit() {
-  const [form] = Form.useForm()
+function formatDate(v) {
+  if (!v) return undefined
+  if (typeof v.format === 'function') return v.format('YYYY-MM-DD')
+  const d = new Date(v)
+  return isNaN(d.getTime()) ? undefined : d.toISOString().slice(0, 10)
+}
 
-  const handleFinish = (values) => {
-    // TODO: 接入 createHotel / updateHotel 接口
-    // console.log('Hotel form submit:', values)
+function buildPayload(values) {
+  const openedAt = formatDate(values.openedAt)
+  const roomTypes = [
+    values.roomTypeA?.price != null && `豪华大床房 ${values.roomTypeA.price}元/晚 ${values.roomTypeA.breakfast || ''}`,
+    values.roomTypeB?.price != null && `高级双床房 ${values.roomTypeB.price}元/晚 ${values.roomTypeB.breakfast || ''}`,
+  ]
+    .filter(Boolean)
+    .join('；')
+  const highlights = [values.traffic, values.promotions].filter(Boolean).join('\n')
+  return {
+    name: values.name,
+    nameEn: values.nameEn || undefined,
+    address: values.address,
+    cityId: values.city === 'shanghai' ? 310100 : values.city === 'beijing' ? 110100 : values.city === 'guangzhou' ? 440100 : undefined,
+    star: values.star,
+    openedAt,
+    basePrice: values.basePrice,
+    roomTypes: roomTypes || undefined,
+    highlights: highlights || undefined,
+    images: [], // 暂无上传接口时传空，后端可生成默认图
+  }
+}
+
+function HotelEdit() {
+  const { id } = useParams()
+  const navigate = useNavigate()
+  const [form] = Form.useForm()
+  const [loading, setLoading] = useState(false)
+  const [detailLoading, setDetailLoading] = useState(!!id)
+
+  const isEdit = Boolean(id)
+
+  useEffect(() => {
+    if (!id) return
+    fetchHotelDetail(id)
+      .then((data) => {
+        form.setFieldsValue({
+          name: data.name,
+          nameEn: data.nameEn,
+          address: data.address,
+          city: 'shanghai',
+          star: data.star ?? data.starLevel ?? 5,
+          openedAt: data.openedAt ? dayjs(data.openedAt) : undefined,
+          basePrice: data.basePrice,
+          roomTypeA: data.roomTypes?.[0]
+            ? { price: data.roomTypes[0].price, capacity: 2, breakfast: data.roomTypes[0].breakfast }
+            : undefined,
+          roomTypeB: data.roomTypes?.[1]
+            ? { price: data.roomTypes[1].price, capacity: 2, breakfast: data.roomTypes[1].breakfast }
+            : undefined,
+        })
+      })
+      .catch(() => {})
+      .finally(() => setDetailLoading(false))
+  }, [id, form])
+
+  const handleFinish = async (values) => {
+    setLoading(true)
+    try {
+      const payload = buildPayload(values)
+      if (isEdit) {
+        await updateHotel(id, payload)
+        message.success('更新成功，将重新进入审核流程')
+      } else {
+        const res = await createHotel(payload)
+        message.success('提交成功，等待管理员审核')
+        const newId = res?.id
+        if (newId) navigate(`/merchant/hotels/${newId}`, { replace: true })
+        else navigate('/merchant/hotels')
+      }
+    } catch {
+      // 错误已由 request 拦截器提示
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleSaveDraft = () => {
-    // TODO: 保存草稿
+    message.info('草稿功能可后续对接后端保存接口')
   }
 
   return (
@@ -247,8 +327,8 @@ function HotelEdit() {
           <Form.Item style={{ textAlign: 'right', marginTop: 24 }}>
             <Space>
               <Button onClick={handleSaveDraft}>保存草稿（占位）</Button>
-              <Button type="primary" htmlType="submit">
-                提交审核（占位）
+              <Button type="primary" htmlType="submit" loading={loading}>
+                {isEdit ? '更新并重新提交审核' : '提交审核'}
               </Button>
             </Space>
           </Form.Item>

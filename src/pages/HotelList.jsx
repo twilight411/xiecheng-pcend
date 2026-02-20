@@ -1,27 +1,43 @@
 import { Button, Card, Space, Table, Tag, Typography } from 'antd'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { fetchMyHotels } from '../services/hotel.js'
 
 const { Title, Paragraph, Text } = Typography
 
-const mockHotels = [
-  {
-    id: 'template',
-    name: '【示例】陆家嘴示范酒店',
-    city: '上海',
-    status: 'template',
-    updatedAt: '2025-01-01',
-  },
-  {
-    id: '1',
-    name: '上海陆家嘴禧酒店',
-    city: '上海',
-    status: 'draft',
-    updatedAt: '2025-02-01',
-  },
-]
+const TEMPLATE_ROW = {
+  id: 'template',
+  name: '【示例】陆家嘴示范酒店',
+  city: '上海',
+  status: 'template',
+  updatedAt: '2025-01-01',
+}
 
 function HotelList() {
   const navigate = useNavigate()
+  const [list, setList] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    fetchMyHotels()
+      .then((data) => {
+        if (!cancelled) {
+          const rows = (data || []).map((h) => ({
+            id: String(h.id),
+            name: h.name,
+            city: h.city?.name ?? h.city ?? '-',
+            status: h.status || 'pending',
+            updatedAt: h.updatedAt || h.updated_at || '-',
+          }))
+          setList(rows)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [])
 
   const columns = [
     {
@@ -46,8 +62,10 @@ function HotelList() {
       key: 'status',
       render: (status) => {
         if (status === 'template') return <Tag color="default">模板</Tag>
-        if (status === 'draft') return <Tag color="blue">草稿</Tag>
+        if (status === 'pending') return <Tag color="processing">待审核</Tag>
         if (status === 'online') return <Tag color="green">已上线</Tag>
+        if (status === 'offline') return <Tag color="default">已下线</Tag>
+        if (status === 'rejected') return <Tag color="red">未通过</Tag>
         return <Tag>未知</Tag>
       },
     },
@@ -92,11 +110,18 @@ function HotelList() {
             新建酒店
           </Button>
         </div>
-        <Table rowKey="id" columns={columns} dataSource={mockHotels} pagination={false} />
-        <Paragraph type="secondary" style={{ marginTop: 12 }}>
-          <Text>提示：</Text>
-          <Text>当前数据为前端示例数据，接入后端后将展示商户实际上传的酒店列表。</Text>
-        </Paragraph>
+        <Table
+          rowKey="id"
+          columns={columns}
+          dataSource={[TEMPLATE_ROW, ...list]}
+          pagination={false}
+          loading={loading}
+        />
+        {list.length === 0 && !loading && (
+          <Paragraph type="secondary" style={{ marginTop: 12 }}>
+            <Text>暂无已提交的酒店，可点击「新建酒店」或「基于模板新建酒店」开始录入。</Text>
+          </Paragraph>
+        )}
       </Card>
     </div>
   )

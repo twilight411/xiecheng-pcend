@@ -1,6 +1,7 @@
 import { Button, Card, ConfigProvider, Form, Input, Radio, Typography } from 'antd'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { login } from '../services/auth.js'
 import { USER_ROLES } from '../constants/index.js'
 import loginBg from '../assets/登录注册背景.png'
 
@@ -10,16 +11,21 @@ function Login() {
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
 
-  const handleFinish = (values) => {
-    // 暂时不做真实登录校验，直接根据角色跳转到对应可见页面
-    const role = values.role || USER_ROLES.MERCHANT
+  const handleFinish = async (values) => {
     setLoading(true)
-    if (role === USER_ROLES.ADMIN) {
-      navigate('/admin/review')
-    } else {
-      navigate('/merchant')
+    try {
+      const data = await login({ username: values.username, password: values.password })
+      const role = data?.user?.role ?? values.role ?? USER_ROLES.MERCHANT
+      if (role === 'admin') {
+        navigate('/admin/review')
+      } else {
+        navigate('/merchant')
+      }
+    } catch {
+      // 错误已由 request 拦截器统一 message 提示
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   return (

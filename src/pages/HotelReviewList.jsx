@@ -1,41 +1,11 @@
 import { Badge, Button, Card, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from 'antd'
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { fetchHotelReviewList, approveHotel, rejectHotel, setHotelStatus } from '../services/hotel.js'
 import { REVIEW_STATUS } from '../constants/index.js'
+import { PAGE_SIZE } from '../constants/index.js'
 
 const { Title, Text } = Typography
 const { Option } = Select
-
-const MOCK_HOTELS = [
-  {
-    id: '1',
-    name: '上海陆家嘴示范酒店',
-    merchant: '示例商户 A',
-    status: REVIEW_STATUS.PENDING,
-    submittedAt: '2025-01-10 12:00',
-  },
-  {
-    id: '2',
-    name: '杭州西湖假日酒店',
-    merchant: '示例商户 B',
-    status: REVIEW_STATUS.APPROVED,
-    submittedAt: '2025-01-08 09:30',
-  },
-  {
-    id: '3',
-    name: '苏州古镇精品客栈',
-    merchant: '示例商户 C',
-    status: REVIEW_STATUS.REJECTED,
-    submittedAt: '2025-01-05 16:20',
-    rejectReason: '图片不清晰，请补充高清酒店大堂与房型照片',
-  },
-  {
-    id: '4',
-    name: '成都宽窄巷子酒店',
-    merchant: '示例商户 D',
-    status: REVIEW_STATUS.OFFLINE,
-    submittedAt: '2024-12-30 10:00',
-  },
-]
 
 function statusTag(status) {
   switch (status) {
@@ -56,62 +26,99 @@ function statusTag(status) {
 
 function HotelReviewList() {
   const [form] = Form.useForm()
-  const [data, setData] = useState(MOCK_HOTELS)
-  const [rejectModal, setRejectModal] = useState({ open: false, hotelId: null })
+  const [list, setList] = useState([])
+  const [meta, setMeta] = useState({ total: 0, page: 1, pageSize: PAGE_SIZE })
+  const [loading, setLoading] = useState(true)
+  const [rejectModal, setRejectModal] = useState({ open: false, hotelId: null, hotelName: '' })
   const [rejectReason, setRejectReason] = useState('')
 
-  const [filters, setFilters] = useState({
-    keyword: '',
-    status: 'all',
-  })
+  const [statusFilter, setStatusFilter] = useState(undefined)
+  const [keyword, setKeyword] = useState('')
 
-  const handleFilterChange = () => {
-    const values = form.getFieldsValue()
-    setFilters({
-      keyword: values.keyword || '',
-      status: values.status || 'all',
-    })
+  const onFilterChange = (_, allValues) => {
+    setStatusFilter(allValues.status === 'all' ? undefined : allValues.status)
+    setKeyword((allValues.keyword || '').trim())
   }
+
+  const fetchList = useCallback(async (page = 1) => {
+    setLoading(true)
+    try {
+      const { list: data, meta: m } = await fetchHotelReviewList({
+        page,
+        pageSize: PAGE_SIZE,
+        status: statusFilter,
+      })
+      setList(Array.isArray(data) ? data : [])
+      setMeta(m || { total: 0, page: 1, pageSize: PAGE_SIZE })
+    } catch {
+      setList([])
+    } finally {
+      setLoading(false)
+    }
+  }, [statusFilter])
+
+  useEffect(() => {
+    fetchList(1)
+  }, [fetchList])
 
   const filteredData = useMemo(() => {
-    return data.filter((item) => {
-      if (filters.status !== 'all' && item.status !== filters.status) return false
-      if (filters.keyword) {
-        const kw = filters.keyword.toLowerCase()
-        return item.name.toLowerCase().includes(kw) || item.merchant.toLowerCase().includes(kw)
-      }
-      return true
-    })
-  }, [data, filters])
-
-  const updateStatus = (id, status, extra = {}) => {
-    setData((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, status, ...extra } : item)),
+    if (!keyword) return list
+    const kw = keyword.toLowerCase()
+    return list.filter(
+      (item) =>
+        (item.name && item.name.toLowerCase().includes(kw)) ||
+        (item.address && item.address.toLowerCase().includes(kw)),
     )
-  }
+  }, [list, keyword])
 
   const handleApprove = (record) => {
     Modal.confirm({
       title: `确认通过「${record.name}」的审核？`,
-      onOk: () => {
-        updateStatus(record.id, REVIEW_STATUS.APPROVED)
-        message.success('已通过审核')
+      onOk: async () => {
+        try {
+          await approveHotel(record.id, {})
+          message.success('已通过审核')
+          fetchList(meta.page)
+        } catch {
+          // 错误已由 request 拦截器提示
+        }
       },
     })
   }
 
   const handleReject = (record) => {
-    setRejectModal({ open: true, hotelId: record.id })
+    setRejectModal({ open: true, hotelId: record.id, hotelName: record.name })
     setRejectReason(record.rejectReason || '')
+  }
+
+  const submitReject = async () => {
+    if (!rejectReason.trim()) {
+      message.warning('请填写不通过原因')
+      return
+    }
+    try {
+      await rejectHotel(rejectModal.hotelId, { reason: rejectReason.trim() })
+      message.success('已标记为不通过')
+      setRejectModal({ open: false, hotelId: null, hotelName: '' })
+      setRejectReason('')
+      fetchList(meta.page)
+    } catch {
+      // 错误已由 request 拦截器提示
+    }
   }
 
   const handleOfflineToggle = (record) => {
     const isOffline = record.status === REVIEW_STATUS.OFFLINE
     Modal.confirm({
       title: isOffline ? `确认恢复「${record.name}」上线？` : `确认将「${record.name}」下线？`,
-      onOk: () => {
-        updateStatus(record.id, isOffline ? REVIEW_STATUS.APPROVED : REVIEW_STATUS.OFFLINE)
-        message.success(isOffline ? '已恢复上线' : '已下线酒店')
+      onOk: async () => {
+        try {
+          await setHotelStatus(record.id, { status: isOffline ? 'online' : 'offline' })
+          message.success(isOffline ? '已恢复上线' : '已下线酒店')
+          fetchList(meta.page)
+        } catch {
+          // 错误已由 request 拦截器提示
+        }
       },
     })
   }
@@ -123,9 +130,10 @@ function HotelReviewList() {
       key: 'name',
     },
     {
-      title: '商户',
-      dataIndex: 'merchant',
-      key: 'merchant',
+      title: '城市',
+      dataIndex: 'city',
+      key: 'city',
+      render: (c) => (c && typeof c === 'object' ? c.name : c) || '-',
     },
     {
       title: '状态',
@@ -134,9 +142,9 @@ function HotelReviewList() {
       render: (value) => statusTag(value),
     },
     {
-      title: '提交时间',
-      dataIndex: 'submittedAt',
-      key: 'submittedAt',
+      title: '开业日期',
+      dataIndex: 'openedAt',
+      key: 'openedAt',
     },
     {
       title: '操作',
@@ -163,6 +171,7 @@ function HotelReviewList() {
           <Button
             type="link"
             size="small"
+            disabled={record.status === REVIEW_STATUS.REJECTED}
             onClick={() => handleOfflineToggle(record)}
           >
             {record.status === REVIEW_STATUS.OFFLINE ? '恢复上线' : '下线'}
@@ -182,16 +191,15 @@ function HotelReviewList() {
           可以按状态筛选待审核酒店，查看商户提交的酒店信息，并进行通过 / 不通过 / 下线等操作。
         </Text>
 
-        {/* 筛选区 */}
         <Form
           form={form}
           layout="inline"
-          initialValues={{ status: 'pending', keyword: '' }}
-          onValuesChange={handleFilterChange}
+          initialValues={{ status: 'all', keyword: '' }}
+          onValuesChange={onFilterChange}
           style={{ marginBottom: 16 }}
         >
           <Form.Item label="关键字" name="keyword">
-            <Input placeholder="按酒店名 / 商户搜索" allowClear />
+            <Input placeholder="按酒店名 / 地址搜索" allowClear />
           </Form.Item>
           <Form.Item label="审核状态" name="status">
             <Select style={{ width: 160 }}>
@@ -204,26 +212,27 @@ function HotelReviewList() {
           </Form.Item>
         </Form>
 
-        {/* 列表 */}
-        <Table rowKey="id" columns={columns} dataSource={filteredData} pagination={false} />
+        <Table
+          rowKey="id"
+          columns={columns}
+          dataSource={filteredData}
+          loading={loading}
+          pagination={{
+            current: meta.page,
+            pageSize: meta.pageSize,
+            total: meta.total,
+            showSizeChanger: false,
+            onChange: (page) => fetchList(page),
+          }}
+        />
       </Card>
 
-      {/* 不通过原因弹窗 */}
       <Modal
         title="填写不通过原因"
         open={rejectModal.open}
-        onOk={() => {
-          if (!rejectReason) {
-            message.warning('请填写不通过原因')
-            return
-          }
-          updateStatus(rejectModal.hotelId, REVIEW_STATUS.REJECTED, { rejectReason })
-          setRejectModal({ open: false, hotelId: null })
-          setRejectReason('')
-          message.success('已标记为不通过')
-        }}
+        onOk={submitReject}
         onCancel={() => {
-          setRejectModal({ open: false, hotelId: null })
+          setRejectModal({ open: false, hotelId: null, hotelName: '' })
           setRejectReason('')
         }}
       >
@@ -239,4 +248,3 @@ function HotelReviewList() {
 }
 
 export default HotelReviewList
-

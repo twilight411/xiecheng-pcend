@@ -4,10 +4,10 @@ export const USER_ROLES = {
   ADMIN: 'admin',
 }
 
-// 审核状态
+// 审核状态（与后端 API 一致）
 export const REVIEW_STATUS = {
   PENDING: 'pending',
-  APPROVED: 'approved',
+  APPROVED: 'online',   // 后端“通过”即 online
   REJECTED: 'rejected',
   OFFLINE: 'offline',
 }

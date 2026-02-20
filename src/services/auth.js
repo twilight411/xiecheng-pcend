@@ -1,17 +1,28 @@
 import request from './request.js'
 
-// 登录接口占位：具体路径与字段后续和后端对齐
-export function login(payload) {
-  return request.post('/auth/login', payload)
+/**
+ * 登录。请求体: { username, password }
+ * 成功返回: { user: { id, username, role } }，role 为 'admin' | 'merchant'
+ */
+export async function login(payload) {
+  const res = await request.post('/auth/login', payload)
+  return res.data
 }
 
-// 注册接口占位
-export function register(payload) {
-  return request.post('/auth/register', payload)
+/**
+ * 注册。请求体: { username, password }
+ * 成功返回: { id, username, role }。用户名已存在时后端返回 code 1003
+ */
+export async function register(payload) {
+  const res = await request.post('/auth/register', payload)
+  return res.data
 }
 
-// 获取当前登录用户信息
-export function fetchCurrentUser() {
-  return request.get('/auth/me')
+/**
+ * 获取当前登录用户。成功返回: { id, username, role }
+ */
+export async function fetchCurrentUser() {
+  const res = await request.get('/auth/me')
+  return res.data
 }
 
