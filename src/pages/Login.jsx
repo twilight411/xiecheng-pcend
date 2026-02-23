@@ -1,17 +1,19 @@
-import { Button, Card, ConfigProvider, Form, Input, Radio, Typography } from 'antd'
+import { Alert, Button, Card, ConfigProvider, Form, Input, Radio, Typography } from 'antd'
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { login } from '../services/auth.js'
 import { USER_ROLES } from '../constants/index.js'
 import loginBg from '../assets/登录注册背景.png'
 
-const { Title } = Typography
+const { Title, Text } = Typography
 
 function Login() {
   const [loading, setLoading] = useState(false)
+  const [loginError, setLoginError] = useState('')
   const navigate = useNavigate()
 
   const handleFinish = async (values) => {
+    setLoginError('')
     setLoading(true)
     try {
       const data = await login({ username: values.username, password: values.password })
@@ -21,8 +23,20 @@ function Login() {
       } else {
         navigate('/merchant')
       }
-    } catch {
-      // 错误已由 request 拦截器统一 message 提示
+    } catch (err) {
+      const code = err?.response?.data?.code
+      const msg =
+        err?.response?.data?.message ||
+        err?.response?.data?.msg ||
+        err?.response?.data?.error ||
+        err?.message
+      if (code === 1001 || /未注册|不存在|not found/i.test(msg || '')) {
+        setLoginError('该用户未注册，请先注册后再登录。')
+      } else if (code === 1002 || /密码|password|invalid|wrong|username/i.test(msg || '')) {
+        setLoginError('用户名或密码错误，请重试。')
+      } else {
+        setLoginError(typeof msg === 'string' && msg ? msg : '登录失败，请检查用户名和密码。')
+      }
     } finally {
       setLoading(false)
     }
@@ -71,6 +85,16 @@ function Login() {
           <Title level={3} style={{ textAlign: 'center', marginBottom: 24, color: '#fff' }}>
             易宿酒店管理后台 - 登录
           </Title>
+          {loginError && (
+            <Alert
+              type="error"
+              showIcon
+              message={loginError}
+              style={{ marginBottom: 16 }}
+              closable
+              onClose={() => setLoginError('')}
+            />
+          )}
           <Form layout="vertical" onFinish={handleFinish} initialValues={{ role: USER_ROLES.MERCHANT }}>
             <Form.Item label="用户名" name="username" rules={[{ required: true, message: '请输入用户名' }]}>
               <Input placeholder="请输入用户名" />
@@ -92,9 +116,13 @@ function Login() {
                 loading={loading}
                 style={{ backgroundColor: '#FFB300', borderColor: '#FFB300' }}
               >
-                登录（占位）
+                登录
               </Button>
             </Form.Item>
+            <div style={{ textAlign: 'center', marginTop: 8 }}>
+              <Text type="secondary" style={{ color: 'rgba(255,255,255,0.65)' }}>没有账号？</Text>
+              <Link to="/register" style={{ marginLeft: 4, color: '#FFB300' }}>去注册</Link>
+            </div>
           </Form>
         </Card>
       </div>

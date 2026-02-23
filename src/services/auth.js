@@ -1,12 +1,25 @@
 import request from './request.js'
+import { setStoredAuth } from './authStorage.js'
+
+export { getStoredUser, getStoredToken, setStoredAuth, clearStoredAuth } from './authStorage.js'
 
 /**
  * 登录。请求体: { username, password }
- * 成功返回: { user: { id, username, role } }，role 为 'admin' | 'merchant'
+ * 成功返回: { user: { id, username, role }, token?: string }，role 为 'admin' | 'merchant'
+ * 会保存 user 与 token 到本地，请求拦截器会自动带 Authorization: Bearer <token>
  */
 export async function login(payload) {
   const res = await request.post('/auth/login', payload)
-  return res.data
+  const data = res.data || res
+  const user = data.user || data
+  const token =
+    data.token ||
+    data.accessToken ||
+    data.access_token ||
+    (data.data && (data.data.token || data.data.accessToken || data.data.access_token)) ||
+    ''
+  setStoredAuth(user, token)
+  return data
 }
 
 /**

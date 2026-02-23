@@ -24,6 +24,7 @@ export function AppRouter() {
 
         {/* 管理员端布局 + 子路由 */}
         <Route path="/admin" element={<AdminLayout />}>
+          <Route index element={<Navigate to="/admin/review" replace />} />
           <Route path="review" element={<HotelReviewList />} />
         </Route>
 

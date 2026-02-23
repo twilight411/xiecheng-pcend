@@ -1,11 +1,11 @@
-import { Button, Card, ConfigProvider, Form, Input, Radio, Typography } from 'antd'
+import { Button, Card, ConfigProvider, Form, Input, Radio, Typography, message } from 'antd'
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { register as registerApi } from '../services/auth.js'
 import { USER_ROLES } from '../constants/index.js'
 import loginBg from '../assets/登录注册背景.png'
 
-const { Title } = Typography
+const { Title, Text } = Typography
 
 function Register() {
   const [loading, setLoading] = useState(false)
@@ -14,8 +14,12 @@ function Register() {
   const handleFinish = async (values) => {
     setLoading(true)
     try {
-      await registerApi({ username: values.username, password: values.password })
-      // 注册成功跳转登录页
+      await registerApi({
+        username: values.username,
+        password: values.password,
+        role: values.role,
+      })
+      message.success('注册成功，请登录')
       navigate('/login')
     } catch {
       // 错误已由 request 拦截器统一提示
@@ -100,9 +104,13 @@ function Register() {
                 loading={loading}
                 style={{ backgroundColor: '#FFB300', borderColor: '#FFB300' }}
               >
-                注册（占位）
+                注册
               </Button>
             </Form.Item>
+            <div style={{ textAlign: 'center', marginTop: 8 }}>
+              <Text type="secondary">已有账号？</Text>
+              <Link to="/login" style={{ marginLeft: 4 }}>去登录</Link>
+            </div>
           </Form>
         </Card>
       </div>
