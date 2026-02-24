@@ -189,7 +189,10 @@
         "starLevel": 5,
         "score": 4.8,
         "minPrice": 399,
-        "images": ["https://..."]
+        "images": ["https://..."],
+        "status": "online",
+        "updatedAt": "2025-02-01",
+        "rejectReason": null
       }
     ],
     "page": 1,
@@ -197,6 +200,8 @@
     "total": 1
   }
   ```
+
+  **商户列表展示建议**：列表项建议包含 **status**、**updatedAt**（或 **updated_at** / **reviewedAt**）用于「最近更新时间」列；当 status 为 `rejected` 时，建议返回 **rejectReason**（或 **reject_reason** / **extra.rejectReason**），以便「我的酒店」列表展示管理员填写的未通过原因。
 
   ### 2.1 获取酒店详情（管理端视角）
 

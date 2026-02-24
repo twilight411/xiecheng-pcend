@@ -1,4 +1,4 @@
-import { Alert, Button, Card, ConfigProvider, Form, Input, Radio, Typography } from 'antd'
+import { Alert, Button, Card, ConfigProvider, Form, Input, Typography } from 'antd'
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { login } from '../services/auth.js'
@@ -17,7 +17,7 @@ function Login() {
     setLoading(true)
     try {
       const data = await login({ username: values.username, password: values.password })
-      const role = data?.user?.role ?? values.role ?? USER_ROLES.MERCHANT
+      const role = data?.user?.role ?? USER_ROLES.MERCHANT
       if (role === 'admin') {
         navigate('/admin/review')
       } else {
@@ -52,10 +52,6 @@ function Login() {
           Form: {
             labelColor: '#ffffff', // ✨ 专门设置表单 Label 颜色
           },
-          Radio: {
-            colorPrimary: '#FFB300',
-            colorText: '#ffffff', // ✨ 单选框文案颜色
-          }
         },
       }}
     >
@@ -95,18 +91,12 @@ function Login() {
               onClose={() => setLoginError('')}
             />
           )}
-          <Form layout="vertical" onFinish={handleFinish} initialValues={{ role: USER_ROLES.MERCHANT }}>
+          <Form layout="vertical" onFinish={handleFinish}>
             <Form.Item label="用户名" name="username" rules={[{ required: true, message: '请输入用户名' }]}>
               <Input placeholder="请输入用户名" />
             </Form.Item>
             <Form.Item label="密码" name="password" rules={[{ required: true, message: '请输入密码' }]}>
               <Input.Password placeholder="请输入密码" />
-            </Form.Item>
-            <Form.Item label="角色" name="role">
-              <Radio.Group>
-                <Radio value={USER_ROLES.MERCHANT}>商户</Radio>
-                <Radio value={USER_ROLES.ADMIN}>管理员</Radio>
-              </Radio.Group>
             </Form.Item>
             <Form.Item>
               <Button
