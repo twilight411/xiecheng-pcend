@@ -1,7 +1,7 @@
-  # 易宿酒店预订平台 — PC 管理端接口约定
+# 易宿酒店预订平台 — PC 管理端接口约定
 
-  > 本文档面向 PC 端管理后台（商户 / 管理员）。字段如有变更，请同步更新 `xiecheng-pcend` 中的 `src/types` 与 `src/services`。  
-  > **英文名、城市、房型说明** 的 2.0 约定（请求/响应与前端取数）见 **docs/api_pc_2.0.md**。
+> 本文档面向 PC 端管理后台（商户 / 管理员）。字段如有变更，请同步更新 `xiecheng-pcend` 中的 `src/types` 与 `src/services`。  
+> **英文名、城市、房型说明** 的请求/响应与前端对接见 **[api_pc_2.0.md](./api_pc_2.0.md)**。
 
   **Base URL**：由 PC 项目 `src/services/request.js` 中的 `BASE_URL` 配置（默认 `http://localhost:3000/api`）。
 
@@ -170,18 +170,21 @@
   | page     | number | 否   | 页码，默认 1 |
   | pageSize | number | 否   | 每页条数，默认 10 |
 
-  **行为说明**
+**行为说明**
 
-  - **商户登录后**（请求头带有效 `Authorization` 且角色为 `merchant`）：仅返回**该商户名下**的酒店（含待审核、已上线、已拒绝等全部状态）；新建商户未创建酒店时列表为空。
-  - **未带 token 或非商户**：返回全平台已上线酒店（与 C 端/移动端一致，PC 端商户列表请务必带 token）。
+- **商户登录后**（请求头带有效 `Authorization` 且角色为 `merchant`）：仅返回**该商户名下**的酒店（含待审核、已上线、已拒绝等全部状态）；每条带 `status`（`pending`/`online`/`rejected`/`offline`）、**`rejectReason`**（审核不通过时管理员填写的未通过原因，与 POST /hotels/:id/reject 的 reason 一致）、**`updatedAt`**（最近更新时间，ISO 8601 字符串），便于「我的酒店」列表展示未通过原因与最近更新时间列。
+- **管理员登录后**（角色为 `admin`）：返回全平台**已上线**酒店，与审核列表互补（审核列表用 GET /hotels/review）。
+- **未带 token**：返回全平台已上线酒店（与 C 端/移动端一致）。
 
-  **响应示例**
+**响应格式（带 token 时）**
 
-  与移动端列表格式一致，例如：
+PC 端带 token 时返回统一结构，便于用 `data` 展示列表：
 
-  ```json
-  {
-    "list": [
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": [
       {
         "id": "1",
         "name": "某某大酒店（上海店）",
@@ -191,19 +194,21 @@
         "minPrice": 399,
         "images": ["https://..."],
         "status": "online",
-        "updatedAt": "2025-02-01",
-        "rejectReason": null
+        "rejectReason": null,
+        "updatedAt": "2025-02-20T08:00:00.000Z"
       }
     ],
+  "meta": {
+    "total": 1,
     "page": 1,
-    "pageSize": 10,
-    "total": 1
+    "pageSize": 10
   }
-  ```
+}
+```
 
-  **商户列表展示建议**：列表项建议包含 **status**、**updatedAt**（或 **updated_at** / **reviewedAt**）用于「最近更新时间」列；当 status 为 `rejected` 时，建议返回 **rejectReason**（或 **reject_reason** / **extra.rejectReason**），以便「我的酒店」列表展示管理员填写的未通过原因。
+（未带 token 时仍为 `{ list, page, pageSize, total }`，与移动端一致。）
 
-  ### 2.1 获取酒店详情（管理端视角）
+### 2.1 获取酒店详情（管理端视角）
 
   **请求**
 
@@ -223,7 +228,7 @@
   {
     "id": "1",
     "name": "某某大酒店（上海店）",
-    "nameEn": null,
+    "nameEn": "Example Hotel Shanghai",
     "address": "上海市浦东新区某路 100 号",
     "starLevel": 5,
     "star": 5,
@@ -231,6 +236,8 @@
     "openedAt": "2025-02-20",
     "status": "online",
     "facilities": ["免费WiFi", "停车场"],
+    "coverImage": "https://...",
+    "carouselImages": ["https://...", "https://..."],
     "images": ["https://..."],
     "roomTypes": [
       {
@@ -239,18 +246,25 @@
         "bedType": "大床",
         "price": 399,
         "area": "25㎡",
-        "breakfast": "含早"
+        "breakfast": "含早",
+        "image": "https://..."
       }
-    ]
+    ],
+    "roomTypesSummary": "豪华大床房 399元/晚 含早；高级双床房 499元/晚",
+    "city": { "id": 1, "name": "上海", "countryCode": "CN" },
+    "cityName": "上海"
   }
   ```
 
   **说明**
 
+  - **封面与轮播**：`coverImage` 为酒店封面图（一张），`carouselImages` 为轮播图 URL 数组（含封面顺序）；`images` 与 `carouselImages` 一致，兼容旧版。管理员/移动端详情均可据此展示封面与轮播。
+  - **房型图**：`roomTypes[].image` 为对应房型的主图（一张），用于审核与移动端房型列表展示。
   - `star` 与 `starLevel` 数值相同，PC 端可直接使用 `star`。
   - `basePrice` 来自 `hotels.min_price_cache`，用于管理端表单的“基础房价（起）”。
   - `openedAt` 优先取 `extra.openedAt`，否则回退为 `created_at` 的日期。
-  - **编辑页与查看详情依赖**：响应中须包含 `nameEn`、`city`（或 `cityName`）、房型说明。房型说明：后端可在 `roomTypesSummary`（字符串）中返回商户提交的房型文案，编辑页与审核「查看详情」优先用 `roomTypesSummary` 回填/展示；`roomTypes` 可为房间列表数组，二者可同时存在。
+  - **详情响应需包含**：`nameEn`、`city`（或 `cityName`）、房型说明字符串（如 `roomTypesSummary`），否则编辑页和审核「查看详情」会显示为空；PC 端创建/更新时已提交这些字段，后端需持久化并在本接口返回。
+  - **标签与设施**：详情中 `facilities` 来自酒店 **设施**（extra.amenities，自由文本列表）；`tags` 来自 **标签表**（tags + hotel_tags，返回 `{ code, name }`）。设施和标签在后端是两套数据：创建/更新时可分别传 `facilities`（或 `amenities`）和 `tags`，都支持“填”：设施用逗号分隔字符串或数组即可；标签用逗号分隔的**名称或 code**，后端会按 tags 表匹配并关联。
 
   ### 2.2 创建酒店
 
@@ -267,14 +281,19 @@
   | name       | string   | 是   | 酒店名称（中文）                           |
   | nameEn     | string   | 否   | 酒店名称（英文）                           |
   | address    | string   | 否   | 地址                                     |
-  | cityId     | number   | 否   | 城市 ID（未传时自动选一城市）               |
-  | city       | string   | 否   | 城市名称（PC 端当前为手动输入，会传此字段；若后端支持请持久化并在 2.1 中返回） |
+  | city       | string   | 否   | 城市名称（PC 端会传；后端支持则按名称解析为 city_id 并持久化，在 2.1 详情中返回 city/cityName） |
+  | cityId     | number   | 否   | 城市 ID（与 city 二选一；未传时自动选一城市） |
   | star       | number   | 否   | 星级（3/4/5）                             |
   | openedAt   | string   | 否   | 开业日期 `YYYY-MM-DD`                    |
   | basePrice  | number   | 否   | 基础房价（起）                            |
   | roomTypes  | string   | 否   | 房型说明（文本）                           |
   | highlights | string   | 否   | 周边亮点（文本）                           |
-  | images     | string[] | 否   | 图片 URL 列表；不传则后端生成默认图片（3 张） |
+  | coverImage | string   | 否   | 封面图 URL（一张）；与 carouselImages 二选一或与 images 兼容 |
+  | carouselImages | string[] | 否   | 轮播图 URL 数组（不含封面）；与 images 二选一 |
+  | images     | string[] | 否   | 图片 URL 列表（第一张为封面，其余为轮播）；不传则后端生成默认图（3 张） |
+  | facilities | string / string[] | 否   | 设施（如免费WiFi、停车场）。可传数组，或逗号/中文逗号分隔字符串，后端存为 extra.amenities；详情返回为 facilities |
+  | amenities  | string / string[] | 否   | 同 facilities，二选一即可 |
+  | tags       | string / string[] | 否   | 酒店标签。可传数组，或逗号/中文逗号分隔字符串；每项为标签 **名称** 或 **code**（如 豪华型、pool），后端按名称/code 匹配 tags 表并写入 hotel_tags；未匹配到的项忽略 |
 
   **响应示例**
 
@@ -305,7 +324,10 @@
 **请求体**
 
   - 与创建时字段相同，支持部分字段更新；未传字段保持不变。
-  - 若传 `images: string[]`，则覆盖原有图片（至少第一张作为封面）。
+  - 图片可传 `coverImage`（封面）+ `carouselImages`（轮播数组），或 `images`（第一张为封面）。传任一项则整体覆盖酒店图片；不传任何图片字段则保留原图。图片 URL 建议先通过 **POST /api/upload/image** 上传获得。
+  - **facilities** / **amenities**：传则覆盖酒店设施列表（可传空数组或空字符串清空）。
+  - **tags**：传则覆盖酒店标签关联（可传空数组或空字符串清空）；每项为标签名称或 code，后端按 tags 表匹配。
+  - **submittedAt**（可选）：PC 端每次点击「更新并重新提交审核」会带 `submittedAt: ISO 时间戳`，便于后端将「仅修改图片」也视为有更新、并允许随后调用的 **POST /hotels/:id/status** 将状态置为 `pending`。后端可忽略此字段或用于更新 `updated_at`。
 
   **响应示例**
 
@@ -323,7 +345,25 @@
   }
   ```
 
-### 2.4 审核列表（管理员 / 商户）
+### 2.4 图片上传（商户/管理员）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | /api/upload/image | 上传单张图片，返回 URL；请求为 multipart/form-data，字段名 `file`，最大 5MB，仅支持 jpeg/png/gif/webp。 |
+
+响应示例：`{ "code": 0, "message": "ok", "data": { "url": "https://host/uploads/xxx.jpg" } }`。该 URL 可直接用于创建/更新酒店的 `images` 或房型的 `imageUrls`。详见 [IMAGE_UPLOAD_FLOW.md](IMAGE_UPLOAD_FLOW.md)。
+
+### 2.5 更新房型图片
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| PATCH | /api/hotels/:hotelId/rooms/:roomId | 更新指定房型的图片列表（需认证；商户仅能改自己酒店的房型）。 |
+
+**请求体**：`{ "imageUrls": ["url1", "url2", ...] }`，URL 来自 POST /api/upload/image。传空数组即清空该房型图片。
+
+**响应**：`{ "code": 0, "message": "ok", "data": <房型对象含 images> }`。房型列表 GET /api/hotels/:hotelId/rooms 中每个房型已包含 `images` 数组。
+
+### 2.6 审核列表（管理员 / 商户）
 
 **请求**
 
@@ -361,17 +401,24 @@
         "basePrice": 399,
         "status": "pending",
         "openedAt": "2025-02-20",
-        "city": { "id": 310100, "name": "上海" },
+        "city": {
+          "id": 310100,
+          "name": "上海"
+        },
         "cityName": "上海"
       }
     ],
-    "meta": { "total": 32, "page": 1, "pageSize": 10 }
+    "meta": {
+      "total": 32,
+      "page": 1,
+      "pageSize": 10
+    }
   }
   ```
 
-  **说明**：列表项含 **city**（`{ id, name }`）、**cityName**（与 `city.name` 一致）。城市显示名后端优先用 `extra.cityNameDisplay`，无则退回 `cities.name`；前端列表展示用 `item.cityName` 或 `item.city.name` 即可（二者已一致，支持汝城等自定义城市名）。
+  **列表项城市字段说明**：每条数据包含 `city`（`{ id, name }`）与 `cityName`（字符串）。城市显示名优先使用商户填写的名称（存于 `extra.cityNameDisplay`，如「汝城」），若无则使用 `cities` 表对应名称。前端展示列表城市时请用 `item.cityName` 或 `item.city.name`。
 
-### 2.5 审核通过
+### 2.7 审核通过
 
 **请求**
 
@@ -404,7 +451,7 @@
 
   - 后端会将酒店状态设置为 `online`，同时可在内部记录 `approvalRemark`。
 
-### 2.6 审核不通过
+### 2.8 审核不通过
 
 **请求**
 
@@ -433,7 +480,7 @@
   }
   ```
 
-### 2.7 上线 / 下线
+### 2.9 上线 / 下线
 
 **请求**
 
@@ -465,7 +512,19 @@
   **说明**
 
   - 建议业务上约定：审核通过后统一使用 `approve` 进入 `online`，后续运营上下线使用 `/status` 接口在 `online` / `offline` 之间切换。
-  - **重新提交审核**：商户在「未通过」酒店上修改内容后，先 `PUT /hotels/:id` 再调用本接口传 `{ "status": "pending" }`（带商户 token），即可将状态从 rejected 改为 pending，管理员在审核列表中可见并再次审核。PC 端编辑页「更新并重新提交审核」已按此流程实现。
+  - **商户重新提交审核**：被拒绝后，商户修改内容后可再次提交审核。调用本接口，传 `status: "pending"`，即可将酒店置为待审核；管理员在「待审核」列表中会看到该酒店，可再次通过/拒绝。
+
+### 2.10 审核与推送流程（后端支持情况）
+
+| 步骤 | 操作 | 接口 | 说明 |
+|------|------|------|------|
+| 1 | 商户提交酒店 | POST /hotels | 新建酒店，状态为 `pending` |
+| 2 | 管理员通过 | POST /hotels/:id/approve | 仅管理员；状态变为 `online`，**移动端 GET /hotels 可见** |
+| 2' | 管理员不通过 | POST /hotels/:id/reject | 仅管理员；状态变为 `rejected` |
+| 3 | 商户看到未通过 | GET /hotels（带商户 token）或 GET /hotels/review | 列表项含 `status`，可展示「未通过」 |
+| 4 | 商户修改后重新提交 | PUT /hotels/:id 修改内容后，再 POST /hotels/:id/status 传 `{ "status": "pending" }` | 状态从 `rejected` 改为 `pending` |
+| 5 | 管理员看到重新提交 | GET /hotels/review?status=pending | 待审核列表中出现该酒店，可再次通过/拒绝 |
+| 6 | 通过后推送到移动端 | 移动端 GET /hotels（无 token） | 只返回 `status=online` 的酒店，审核通过的酒店会出现在移动端 |
 
   ---
 
@@ -480,38 +539,3 @@
 
   - 认证：`xiecheng-pcend/src/services/auth.js`
   - 酒店管理：`xiecheng-pcend/src/services/hotel.js`
-
-  ---
-
-  ## 4. 后端对接必做（审核与详情）
-
-  以下为 PC 端管理员审核流程的前端依赖，后端需保证满足，否则会出现「无法查看详情、点击通过没反应」等问题。
-
-  **4.1 审核列表与 id 一致性**
-
-  - `GET /hotels/review` 返回的每条酒店必须带有字段 `id`（与库中主键一致，可为数字或字符串）。
-  - 该 `id` 必须能用于：
-    - `GET /hotels/:id`（管理员查看详情）
-    - `POST /hotels/:id/approve`（通过）
-    - `POST /hotels/:id/reject`（不通过）
-    - `POST /hotels/:id/status`（上线/下线）
-  - 即：审核列表里出现的酒店，用其 `id` 去请求上述接口时，**不能返回 404**。
-
-  **4.2 酒店详情 GET /hotels/:id（管理员）**
-
-  - 当请求头带 `Authorization: Bearer <管理员 token>` 且当前用户为管理员时：
-  - 必须按 `:id` 返回该酒店详情，**与酒店状态（pending/online/rejected/offline）、与 user_id 归属无关**。
-  - 若仅对「当前用户为 owner 或 status=online」才返回 200，其余 404，会导致管理员在审核列表点击「查看详情」或依赖详情的流程时拿到 404，无法查看、影响操作。
-  - 建议：管理员身份下，仅根据 `id` 查酒店并返回；不存在再 404。
-
-  **4.3 审核通过 POST /hotels/:id/approve**
-
-  - 仅管理员可调；后端根据 `:id` 将对应酒店状态置为 `online`。
-  - 若后端实现是「先 GET 酒店再更新」，需保证管理员能通过 `:id` 查到该酒店（与 4.2 一致），否则会同样返回 404，前端表现为「点击通过没反应」（实际为接口 404，错误提示已在前端展示）。
-  - 响应格式见 2.5；列表数组若为 `response.data.data`，前端已按此取值。
-
-  **4.4 状态同步与列表一致性**
-
-  - **商户端「我的酒店」**（GET /hotels，带商户 token）必须返回**最新审核状态**。管理员执行通过/不通过/下线后，该接口应返回更新后的 `status`（如 `online` / `rejected` / `offline`），否则商户列表会一直显示「待审核」。
-  - **审核列表**（GET /hotels/review）返回的 `status` 与商户列表一致（同一酒店同一状态）。前端已兼容 `status` 为字符串或数字（如 1=pending, 2=online, 3=rejected, 4=offline）。
-  - **商户编辑后重新提交**：PUT /hotels/:id 成功后，管理员审核列表 GET /hotels/review 应能拿到该酒店的最新信息；若列表或详情仍为旧数据，需检查后端是否正确更新并返回。

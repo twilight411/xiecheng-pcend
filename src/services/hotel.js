@@ -90,3 +90,12 @@ export async function setHotelStatus(hotelId, payload) {
   return res?.data ?? res
 }
 
+/**
+ * 更新房型图片（api_pc 2.5）。PATCH /hotels/:hotelId/rooms/:roomId，请求体 { imageUrls: string[] }。
+ * URL 需先通过 POST /upload/image 上传获得。
+ */
+export async function updateRoomImages(hotelId, roomId, payload) {
+  const res = await request.patch(`/hotels/${hotelId}/rooms/${roomId}`, payload)
+  return res?.data ?? res
+}
+

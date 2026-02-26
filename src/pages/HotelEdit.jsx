@@ -1,10 +1,11 @@
-import { Button, Card, Col, DatePicker, Divider, Form, Input, InputNumber, Row, Select, Space, Tag, Typography, Upload, message } from 'antd'
+import { Button, Card, Col, DatePicker, Divider, Form, Input, InputNumber, Modal, Row, Select, Space, Tag, Typography, Upload, message } from 'antd'
 import { REVIEW_STATUS } from '../constants/index.js'
 import { MinusCircleOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { createHotel, updateHotel, fetchHotelDetail, setHotelStatus } from '../services/hotel.js'
+import { createHotel, updateHotel, fetchHotelDetail, setHotelStatus, updateRoomImages } from '../services/hotel.js'
+import { uploadImage } from '../services/upload.js'
 
 const { Title, Paragraph, Text } = Typography
 const { TextArea } = Input
@@ -12,21 +13,22 @@ const { Option } = Select
 
 const HOTEL_DRAFT_KEY = 'pc_hotel_draft'
 
-/** 把后端返回的房型字符串解析为 roomTypesList（与 buildPayload 序列化格式一致） */
+/** 把后端返回的房型字符串或数组解析为 roomTypesList（与 buildPayload 序列化格式一致）；数组时带回 roomImage 用于回填房型图 */
 function parseRoomTypesFromDetail(roomTypes) {
   if (Array.isArray(roomTypes) && roomTypes.length) {
-    return roomTypes.map((r) => ({
+    return roomTypes.map((r, i) => ({
       name: r.name ?? '',
       price: r.price,
       capacity: r.capacity ?? 2,
       breakfast: r.breakfast,
+      roomImage: r.image ? [{ uid: `room-img-${i}`, url: r.image, name: 'room.jpg', status: 'done' }] : [],
     }))
   }
   if (typeof roomTypes !== 'string' || !roomTypes.trim()) {
-    return [{ name: '', price: undefined, capacity: 2, breakfast: undefined }]
+    return [{ name: '', price: undefined, capacity: 2, breakfast: undefined, roomImage: [] }]
   }
   const parts = roomTypes.split(/[；;]/).map((s) => s.trim()).filter(Boolean)
-  if (!parts.length) return [{ name: '', price: undefined, capacity: 2, breakfast: undefined }]
+  if (!parts.length) return [{ name: '', price: undefined, capacity: 2, breakfast: undefined, roomImage: [] }]
   return parts.map((part) => {
     const priceMatch = part.match(/(\d+)\s*元\/晚/)
     const price = priceMatch ? Number(priceMatch[1]) : undefined
@@ -34,7 +36,7 @@ function parseRoomTypesFromDetail(roomTypes) {
     const hasBreakfast = /含早/.test(part)
     const noBreakfast = /不含早/.test(part)
     const breakfast = hasBreakfast ? '含早' : noBreakfast ? '不含早' : undefined
-    return { name: name || '', price, capacity: 2, breakfast }
+    return { name: name || '', price, capacity: 2, breakfast, roomImage: [] }
   })
 }
 
@@ -43,6 +45,27 @@ function formatDate(v) {
   if (typeof v.format === 'function') return v.format('YYYY-MM-DD')
   const d = new Date(v)
   return isNaN(d.getTime()) ? undefined : d.toISOString().slice(0, 10)
+}
+
+/** 将「设施」或「标签」的填值转为数组：支持逗号/中文逗号分隔字符串或已是数组；用于 facilities / tags 请求体 */
+function parseCommaList(val) {
+  if (Array.isArray(val)) return val.map((s) => (s && typeof s === 'object' && (s.name != null || s.code != null) ? (s.name ?? s.code) : String(s)).trim()).filter(Boolean)
+  if (val == null || val === '') return undefined
+  const str = String(val).trim()
+  if (!str) return undefined
+  return str.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
+}
+
+/** 详情中的 facilities 数组 → 表单填写的逗号分隔字符串 */
+function formatFacilitiesForForm(arr) {
+  if (!Array.isArray(arr) || !arr.length) return ''
+  return arr.map((s) => (s && typeof s === 'object' ? s.name ?? s.code ?? '' : String(s))).filter(Boolean).join(', ')
+}
+
+/** 详情中的 tags（{ code, name }[]）→ 表单填写的逗号分隔字符串 */
+function formatTagsForForm(arr) {
+  if (!Array.isArray(arr) || !arr.length) return ''
+  return arr.map((t) => (t && typeof t === 'object' ? (t.name ?? t.code ?? '') : String(t))).filter(Boolean).join(', ')
 }
 
 function buildPayload(values, options = {}) {
@@ -57,8 +80,13 @@ function buildPayload(values, options = {}) {
   const name = values.name?.trim()
   const nameEn = values.nameEn != null ? String(values.nameEn).trim() : ''
   const city = values.city != null ? String(values.city).trim() : ''
+  const { coverImage, carouselImages } = options
+  // 设施：自由文本，逗号/中文逗号分隔或已是数组；后端存 extra.amenities，详情返回 facilities
+  const facilities = parseCommaList(values.facilities)
+  // 标签：名称或 code，逗号分隔或数组；后端按 tags 表匹配并写入 hotel_tags
+  const tags = parseCommaList(values.tags)
   // 创建/更新时务必带上 nameEn、city、roomTypes（空字符串也传），便于后端持久化并在 GET /hotels/:id 中返回
-  return {
+  const payload = {
     name: forDraft ? (name || '(未命名酒店)') : (name || undefined),
     nameEn: forDraft ? nameEn || undefined : nameEn,
     address: values.address,
@@ -69,8 +97,18 @@ function buildPayload(values, options = {}) {
     basePrice: values.basePrice,
     roomTypes: forDraft ? (roomTypes || undefined) : (roomTypes || ''),
     highlights: highlights || undefined,
-    images: [],
+    facilities: forDraft ? (facilities?.length ? facilities : undefined) : (facilities?.length ? facilities : undefined),
+    tags: forDraft ? (tags?.length ? tags : undefined) : (tags?.length ? tags : undefined),
   }
+  if (!forDraft) {
+    if (coverImage != null && coverImage !== '') payload.coverImage = coverImage
+    if (Array.isArray(carouselImages) && carouselImages.length) payload.carouselImages = carouselImages
+    // 兼容：无 coverImage/carouselImages 时仍传 images 空数组，避免后端误判
+    if (payload.coverImage == null && (!carouselImages || !carouselImages.length)) payload.images = []
+    // 每次提交带时间戳，便于后端将「仅改图」也视为有更新并允许进入待审核；后端可忽略此字段
+    payload.submittedAt = new Date().toISOString()
+  }
+  return payload
 }
 
 function HotelEdit() {
@@ -80,6 +118,8 @@ function HotelEdit() {
   const [loading, setLoading] = useState(false)
   const [detailLoading, setDetailLoading] = useState(!!id)
   const [detail, setDetail] = useState(null)
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false)
+  const leaveActionRef = useRef(null)
 
   const isEdit = Boolean(id)
 
@@ -90,10 +130,19 @@ function HotelEdit() {
         if (raw) {
           const draft = JSON.parse(raw)
           if (draft && typeof draft === 'object') {
-            if (draft.openedAt && typeof draft.openedAt === 'string') {
-              draft.openedAt = dayjs(draft.openedAt).isValid() ? dayjs(draft.openedAt) : undefined
+            const expireMs = 7 * 24 * 60 * 60 * 1000 // 草稿有效期 7 天
+            const updatedAtMs = draft.updatedAt ? Date.parse(draft.updatedAt) : NaN
+            const now = Date.now()
+            const isExpired = Number.isFinite(updatedAtMs) && now - updatedAtMs > expireMs
+            if (isExpired) {
+              // 过期草稿自动清理，避免老数据覆盖最新填写
+              localStorage.removeItem(HOTEL_DRAFT_KEY)
+            } else {
+              if (draft.openedAt && typeof draft.openedAt === 'string') {
+                draft.openedAt = dayjs(draft.openedAt).isValid() ? dayjs(draft.openedAt) : undefined
+              }
+              form.setFieldsValue(draft)
             }
-            form.setFieldsValue(draft)
           }
         }
       } catch {}
@@ -106,6 +155,19 @@ function HotelEdit() {
         const cityVal = (data.cityName != null && String(data.cityName).trim())
           ? String(data.cityName).trim()
           : (data.city != null && typeof data.city === 'object' ? (data.city.name ?? data.city) : (data.city != null ? String(data.city) : ''))
+        const coverUrl = data.coverImage ?? (Array.isArray(data.images) && data.images[0] ? data.images[0] : null)
+        const carouselUrls = Array.isArray(data.carouselImages) && data.carouselImages.length
+          ? data.carouselImages
+          : (Array.isArray(data.images) && data.images.length > 1 ? data.images.slice(1) : [])
+        const coverFileList = coverUrl
+          ? [{ uid: '-cover', url: coverUrl, name: 'cover.jpg', status: 'done' }]
+          : []
+        const galleryFileList = carouselUrls.map((url, i) => ({
+          uid: `gallery-${i}`,
+          url,
+          name: `gallery-${i}.jpg`,
+          status: 'done',
+        }))
         form.setFieldsValue({
           name: data.name ?? '',
           nameEn: data.nameEn ?? '',
@@ -115,22 +177,86 @@ function HotelEdit() {
           openedAt: data.openedAt ? dayjs(data.openedAt) : undefined,
           basePrice: data.basePrice,
           roomTypesList: parseRoomTypesFromDetail(data.roomTypesSummary ?? data.roomTypes),
+          facilities: formatFacilitiesForForm(data.facilities),
+          tags: formatTagsForForm(data.tags),
+          cover: coverFileList,
+          gallery: galleryFileList,
         })
       })
       .catch(() => setDetail(null))
       .finally(() => setDetailLoading(false))
   }, [id, form])
 
+  // 供布局头部「返回列表」在离开前调用：有未保存修改时弹出确认
+  useEffect(() => {
+    window.__hotelEditCanLeave = (go) => {
+      if (!form.isFieldsTouched()) {
+        go()
+        return
+      }
+      leaveActionRef.current = go
+      setLeaveConfirmOpen(true)
+    }
+    return () => {
+      if (window.__hotelEditCanLeave) {
+        window.__hotelEditCanLeave = undefined
+      }
+    }
+  }, [form])
+
+  /** 从表单项 file 中取可上传的 File（Antd 可能在 originFileObj） */
+  const getFile = (item) => item?.originFileObj ?? item
+
   const handleFinish = async (values) => {
     setLoading(true)
     const hide = message.loading(isEdit ? '正在提交更新…' : '正在提交审核…', 0)
     try {
-      const payload = buildPayload(values)
+      const coverList = Array.isArray(values.cover) ? values.cover : []
+      const galleryList = Array.isArray(values.gallery) ? values.gallery : []
+      let coverImage = undefined
+      const carouselImages = []
+
+      if (coverList.length) {
+        const first = coverList[0]
+        const url = first?.url
+        const file = getFile(first)
+        if (url && typeof url === 'string') coverImage = url
+        else if (file instanceof File) {
+          coverImage = await uploadImage(file)
+        }
+      }
+      for (let i = 0; i < galleryList.length; i++) {
+        const item = galleryList[i]
+        const url = item?.url
+        const file = getFile(item)
+        if (url && typeof url === 'string') carouselImages.push(url)
+        else if (file instanceof File) carouselImages.push(await uploadImage(file))
+      }
+
+      const roomTypesList = Array.isArray(values.roomTypesList) ? values.roomTypesList : []
+      const roomImageUrls = []
+      for (let i = 0; i < roomTypesList.length; i++) {
+        const list = roomTypesList[i]?.roomImage
+        if (!Array.isArray(list) || !list.length) {
+          roomImageUrls.push(undefined)
+          continue
+        }
+        const first = list[0]
+        const url = first?.url
+        const file = getFile(first)
+        if (url && typeof url === 'string') roomImageUrls.push(url)
+        else if (file instanceof File) roomImageUrls.push(await uploadImage(file))
+        else roomImageUrls.push(undefined)
+      }
+
+      const payload = buildPayload(values, { coverImage, carouselImages })
       if (import.meta.env.DEV) {
-        console.log('[HotelEdit] 提交请求体 nameEn/city/roomTypes:', {
+        console.log('[HotelEdit] 提交请求体 nameEn/city/roomTypes/coverImage/carouselImages:', {
           nameEn: payload.nameEn,
           city: payload.city,
           roomTypes: payload.roomTypes,
+          coverImage: payload.coverImage,
+          carouselImages: payload.carouselImages,
         })
       }
       if (isEdit) {
@@ -140,6 +266,12 @@ function HotelEdit() {
         message.success('已提交更新并重新进入审核流程；管理员审核后状态会更新。')
         const data = await fetchHotelDetail(id)
         if (data) {
+          const apiRooms = Array.isArray(data.roomTypes) ? data.roomTypes : []
+          for (let i = 0; i < apiRooms.length && i < roomImageUrls.length; i++) {
+            const roomId = apiRooms[i]?.id
+            const url = roomImageUrls[i]
+            if (roomId != null && url) await updateRoomImages(id, roomId, { imageUrls: [url] })
+          }
           setDetail(data)
           const cityVal = (data.cityName != null && String(data.cityName).trim())
             ? String(data.cityName).trim()
@@ -148,6 +280,20 @@ function HotelEdit() {
           const hasRoomTypesFromApi =
             parsedRoomTypes.length > 0 &&
             parsedRoomTypes.some((r) => (r.name && r.name.trim()) || r.price != null)
+          const coverUrl = data.coverImage ?? (Array.isArray(data.images) && data.images[0] ? data.images[0] : null)
+          const carouselUrls = Array.isArray(data.carouselImages) && data.carouselImages.length
+            ? data.carouselImages
+            : (Array.isArray(data.images) && data.images.length > 1 ? data.images.slice(1) : [])
+          const coverFileList = coverUrl
+            ? [{ uid: '-cover', url: coverUrl, name: 'cover.jpg', status: 'done' }]
+            : (coverImage ? [{ uid: '-cover', url: coverImage, name: 'cover.jpg', status: 'done' }] : [])
+          const galleryFileList = carouselUrls.length
+            ? carouselUrls.map((url, i) => ({ uid: `gallery-${i}`, url, name: `gallery-${i}.jpg`, status: 'done' }))
+            : (carouselImages?.length ? carouselImages.map((url, i) => ({ uid: `gallery-${i}`, url, name: `gallery-${i}.jpg`, status: 'done' })) : [])
+          const mergedRoomTypes = (hasRoomTypesFromApi ? parsedRoomTypes : values.roomTypesList?.length ? values.roomTypesList : parsedRoomTypes).map((r, i) => ({
+            ...r,
+            roomImage: (r.roomImage && r.roomImage.length) ? r.roomImage : (roomImageUrls[i] ? [{ uid: `room-${i}`, url: roomImageUrls[i], name: 'room.jpg', status: 'done' }] : []),
+          }))
           form.setFieldsValue({
             name: data.name ?? values.name ?? '',
             nameEn: (data.nameEn != null && data.nameEn !== '') ? data.nameEn : (values.nameEn ?? ''),
@@ -156,11 +302,25 @@ function HotelEdit() {
             star: data.star ?? data.starLevel ?? values.star ?? 5,
             openedAt: data.openedAt ? dayjs(data.openedAt) : (values.openedAt ?? undefined),
             basePrice: data.basePrice ?? values.basePrice,
-            roomTypesList: hasRoomTypesFromApi ? parsedRoomTypes : (values.roomTypesList?.length ? values.roomTypesList : parsedRoomTypes),
+            roomTypesList: mergedRoomTypes,
+            facilities: formatFacilitiesForForm(data.facilities),
+            tags: formatTagsForForm(data.tags),
+            cover: coverFileList,
+            gallery: galleryFileList,
           })
         }
       } else {
-        await createHotel(payload)
+        const createResult = await createHotel(payload)
+        const hotelId = createResult?.id ?? createResult?.data?.id
+        if (hotelId && roomImageUrls.some(Boolean)) {
+          const data = await fetchHotelDetail(hotelId)
+          const apiRooms = Array.isArray(data?.roomTypes) ? data.roomTypes : []
+          for (let i = 0; i < apiRooms.length && i < roomImageUrls.length; i++) {
+            const roomId = apiRooms[i]?.id
+            const url = roomImageUrls[i]
+            if (roomId != null && url) await updateRoomImages(hotelId, roomId, { imageUrls: [url] })
+          }
+        }
         hide()
         clearDraft()
         message.success('提交成功，请到「我的酒店」查看审核状态。')
@@ -177,7 +337,7 @@ function HotelEdit() {
 
   const handleSaveDraft = () => {
     const values = form.getFieldsValue(true)
-    const toSave = { ...values }
+    const toSave = { ...values, updatedAt: new Date().toISOString() }
     if (toSave.openedAt && typeof toSave.openedAt?.format === 'function') {
       toSave.openedAt = toSave.openedAt.format('YYYY-MM-DD')
     }
@@ -193,6 +353,12 @@ function HotelEdit() {
     try {
       localStorage.removeItem(HOTEL_DRAFT_KEY)
     } catch {}
+  }
+
+  const handleClearDraftClick = () => {
+    clearDraft()
+    form.resetFields()
+    message.success('本地草稿已清空。')
   }
 
   const statusTag =
@@ -229,7 +395,7 @@ function HotelEdit() {
           onFinish={handleFinish}
           initialValues={{
             star: 5,
-            roomTypesList: [{ name: '', price: undefined, capacity: 2, breakfast: undefined }],
+            roomTypesList: [{ name: '', price: undefined, capacity: 2, breakfast: undefined, roomImage: [] }],
           }}
         >
           {/* 一、基础信息 */}
@@ -397,11 +563,19 @@ function HotelEdit() {
                           </Select>
                         </Form.Item>
                       </Col>
+                      <Col span={24}>
+                        <Form.Item {...restField} name={[name, 'roomImage']} label="房型图" valuePropName="fileList" getValueFromEvent={(e) => e?.fileList}>
+                          <Upload.Dragger name="file" multiple={false} beforeUpload={() => false} maxCount={1}>
+                            <p className="ant-upload-drag-icon"><UploadOutlined /></p>
+                            <p className="ant-upload-text">点击或拖拽一张图片上传（用于该房型展示）</p>
+                          </Upload.Dragger>
+                        </Form.Item>
+                      </Col>
                     </Row>
                   </Card>
                 ))}
                 <Form.Item>
-                  <Button type="dashed" onClick={() => add({ name: '', price: undefined, capacity: 2, breakfast: undefined })} block icon={<PlusOutlined />}>
+                  <Button type="dashed" onClick={() => add({ name: '', price: undefined, capacity: 2, breakfast: undefined, roomImage: [] })} block icon={<PlusOutlined />}>
                     添加房型
                   </Button>
                 </Form.Item>
@@ -415,6 +589,33 @@ function HotelEdit() {
           <Title level={4} style={{ marginTop: 16 }}>
             四、周边信息与标签
           </Title>
+          <Paragraph type="secondary" style={{ marginBottom: 12 }}>
+            设施与标签是两套数据：设施为自由填写，标签需与系统已有标签名称或 code 一致（如豪华型、健身房、含早餐），多个用逗号分隔。
+          </Paragraph>
+
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                label="酒店设施"
+                name="facilities"
+                tooltip="自由文本，存为设施列表；详情中显示为 facilities"
+              >
+                <TextArea
+                  rows={2}
+                  placeholder="多个用逗号分隔，如：免费WiFi, 停车场, 健身房"
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                label="酒店标签"
+                name="tags"
+                tooltip="填标签名称或 code，与系统 tags 表匹配；如豪华型、经济型、健身房、游泳池、含早餐"
+              >
+                <Input placeholder="多个用逗号分隔，如：豪华型, 健身房, 含早餐" />
+              </Form.Item>
+            </Col>
+          </Row>
 
           <Row gutter={16}>
             <Col span={12}>
@@ -424,20 +625,6 @@ function HotelEdit() {
                 tooltip="用于 C 端展示酒店附近的出行亮点，可自由编辑"
               >
                 <TextArea rows={3} placeholder="请输入周边景点，多个可用逗号或换行分隔，如：外滩、东方明珠、迪士尼" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="酒店标签" name="tags">
-                <Select
-                  mode="multiple"
-                  placeholder="请选择酒店标签"
-                  tagRender={(props) => <Tag color="gold">{props.label}</Tag>}
-                >
-                  <Option value="family">亲子友好</Option>
-                  <Option value="parking">免费停车场</Option>
-                  <Option value="business">商务出行</Option>
-                  <Option value="luxury">豪华型</Option>
-                </Select>
               </Form.Item>
             </Col>
           </Row>
@@ -459,7 +646,12 @@ function HotelEdit() {
           {/* 操作区 */}
           <Form.Item style={{ textAlign: 'right', marginTop: 24 }}>
             <Space>
-              <Button onClick={handleSaveDraft}>保存草稿</Button>
+              {!isEdit && (
+                <>
+                  <Button onClick={handleClearDraftClick}>清空草稿</Button>
+                  <Button onClick={handleSaveDraft}>保存草稿</Button>
+                </>
+              )}
               <Button type="primary" htmlType="submit" loading={loading}>
                 {isEdit ? '更新并重新提交审核' : '提交审核'}
               </Button>
@@ -467,6 +659,53 @@ function HotelEdit() {
           </Form.Item>
         </Form>
       </Card>
+
+      <Modal
+        open={leaveConfirmOpen}
+        title={isEdit ? '离开酒店编辑页' : '离开新建酒店页'}
+        onCancel={() => setLeaveConfirmOpen(false)}
+        footer={
+          <Space style={{ justifyContent: 'flex-end', width: '100%' }}>
+            <Button onClick={() => setLeaveConfirmOpen(false)}>取消</Button>
+            <Button
+              onClick={() => {
+                const go = leaveActionRef.current
+                setLeaveConfirmOpen(false)
+                if (typeof go === 'function') go()
+              }}
+            >
+              直接离开
+            </Button>
+            {!isEdit && (
+              <Button
+                type="primary"
+                onClick={async () => {
+                  try {
+                    const values = form.getFieldsValue(true)
+                    const toSave = { ...values, updatedAt: new Date().toISOString() }
+                    if (toSave.openedAt && typeof toSave.openedAt?.format === 'function') {
+                      toSave.openedAt = toSave.openedAt.format('YYYY-MM-DD')
+                    }
+                    localStorage.setItem(HOTEL_DRAFT_KEY, JSON.stringify(toSave))
+                    message.success('草稿已保存，将返回列表页')
+                  } catch (e) {
+                    message.error('草稿保存失败，已直接返回列表页')
+                  }
+                  const go = leaveActionRef.current
+                  setLeaveConfirmOpen(false)
+                  if (typeof go === 'function') go()
+                }}
+              >
+                保存草稿并离开
+              </Button>
+            )}
+          </Space>
+        }
+      >
+        <Paragraph>
+          当前表单存在尚未提交审核的修改。你可以选择直接离开，或者先将当前内容保存为本地草稿，以便下次继续编辑。
+        </Paragraph>
+      </Modal>
     </div>
   )
 }

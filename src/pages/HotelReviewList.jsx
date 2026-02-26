@@ -357,17 +357,25 @@ function HotelReviewList() {
                   : '-'}
             </Descriptions.Item>
             <Descriptions.Item label="图片">
-              {Array.isArray(detailDrawer.detail.images) && detailDrawer.detail.images.length ? (
-                <Space wrap>
-                  {detailDrawer.detail.images.map((url, i) => (
-                    <a key={i} href={url} target="_blank" rel="noreferrer">
-                      图{i + 1}
-                    </a>
-                  ))}
-                </Space>
-              ) : (
-                '-'
-              )}
+              {(() => {
+                const d = detailDrawer.detail || {}
+                const fromImages = Array.isArray(d.images) ? d.images : []
+                const fromCoverAndCarousel = [
+                  d.coverImage,
+                  ...(Array.isArray(d.carouselImages) ? d.carouselImages : []),
+                ].filter(Boolean)
+                const imgs = fromImages.length ? fromImages : fromCoverAndCarousel
+                if (!imgs.length) return '-'
+                return (
+                  <Space wrap>
+                    {imgs.map((url, i) => (
+                      <a key={i} href={url} target="_blank" rel="noreferrer">
+                        图{i + 1}
+                      </a>
+                    ))}
+                  </Space>
+                )
+              })()}
             </Descriptions.Item>
           </Descriptions>
         )}

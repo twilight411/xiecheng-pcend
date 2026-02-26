@@ -11,6 +11,15 @@ function MerchantLayout() {
   const isListPage = location.pathname === '/merchant' || location.pathname === '/merchant/hotels'
   const user = getStoredUser()
 
+  const handleBackToList = () => {
+    const hook = window.__hotelEditCanLeave
+    if (typeof hook === 'function') {
+      hook(() => navigate('/merchant/hotels'))
+    } else {
+      navigate('/merchant/hotels')
+    }
+  }
+
   const handleLogout = () => {
     clearStoredAuth()
     navigate('/login')
@@ -38,7 +47,7 @@ function MerchantLayout() {
           {!isListPage && (
             <Text
               type="link"
-              onClick={() => navigate('/merchant/hotels')}
+              onClick={handleBackToList}
               style={{ cursor: 'pointer' }}
             >
               返回列表
