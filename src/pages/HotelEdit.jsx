@@ -13,6 +13,23 @@ const { Option } = Select
 
 const HOTEL_DRAFT_KEY = 'pc_hotel_draft'
 
+/** 仅当为真实 http(s) 地址时视为已上传 URL，避免把 blob 预览地址传给后端 */
+function isHttpUrl(s) {
+  return typeof s === 'string' && (s.startsWith('http://') || s.startsWith('https://'))
+}
+
+/** 为本地未上传的图片文件补充 thumbUrl，便于 Upload 展示预览 */
+function normalizeFileListWithPreview(fileList) {
+  if (!Array.isArray(fileList)) return fileList
+  return fileList.map((file) => {
+    const url = file.url || file.thumbUrl
+    if (url) return file
+    const raw = file.originFileObj ?? file
+    if (raw instanceof File) return { ...file, thumbUrl: URL.createObjectURL(raw) }
+    return file
+  })
+}
+
 /** 把后端返回的房型字符串或数组解析为 roomTypesList（与 buildPayload 序列化格式一致）；数组时带回 roomImage 用于回填房型图 */
 function parseRoomTypesFromDetail(roomTypes) {
   if (Array.isArray(roomTypes) && roomTypes.length) {
@@ -80,7 +97,7 @@ function buildPayload(values, options = {}) {
   const name = values.name?.trim()
   const nameEn = values.nameEn != null ? String(values.nameEn).trim() : ''
   const city = values.city != null ? String(values.city).trim() : ''
-  const { coverImage, carouselImages } = options
+  const { coverImage, carouselImages, roomTypeImages } = options
   // 设施：自由文本，逗号/中文逗号分隔或已是数组；后端存 extra.amenities，详情返回 facilities
   const facilities = parseCommaList(values.facilities)
   // 标签：名称或 code，逗号分隔或数组；后端按 tags 表匹配并写入 hotel_tags
@@ -101,10 +118,17 @@ function buildPayload(values, options = {}) {
     tags: forDraft ? (tags?.length ? tags : undefined) : (tags?.length ? tags : undefined),
   }
   if (!forDraft) {
+    // Banner 图只来自当前表单的封面+轮播，且轮播中不重复包含封面，避免后端 hotel_photos 越写越多
     if (coverImage != null && coverImage !== '') payload.coverImage = coverImage
-    if (Array.isArray(carouselImages) && carouselImages.length) payload.carouselImages = carouselImages
-    // 兼容：无 coverImage/carouselImages 时仍传 images 空数组，避免后端误判
-    if (payload.coverImage == null && (!carouselImages || !carouselImages.length)) payload.images = []
+    const carouselDedup = Array.isArray(carouselImages)
+      ? carouselImages.filter((u) => u && u !== coverImage)
+      : []
+    if (carouselDedup.length) payload.carouselImages = carouselDedup
+    if (payload.coverImage == null && !carouselDedup.length) payload.images = []
+    // 房型图：与房型顺序一致，一次提交即可落库。有房型行就传数组（null=不更新），保证后端能收到
+    if (Array.isArray(roomTypeImages) && roomTypeImages.length > 0) {
+      payload.roomTypeImages = roomTypeImages.map((u) => u ?? null)
+    }
     // 每次提交带时间戳，便于后端将「仅改图」也视为有更新并允许进入待审核；后端可忽略此字段
     payload.submittedAt = new Date().toISOString()
   }
@@ -120,6 +144,7 @@ function HotelEdit() {
   const [detail, setDetail] = useState(null)
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false)
   const leaveActionRef = useRef(null)
+  const [previewImage, setPreviewImage] = useState({ open: false, url: '' })
 
   const isEdit = Boolean(id)
 
@@ -156,9 +181,10 @@ function HotelEdit() {
           ? String(data.cityName).trim()
           : (data.city != null && typeof data.city === 'object' ? (data.city.name ?? data.city) : (data.city != null ? String(data.city) : ''))
         const coverUrl = data.coverImage ?? (Array.isArray(data.images) && data.images[0] ? data.images[0] : null)
-        const carouselUrls = Array.isArray(data.carouselImages) && data.carouselImages.length
+        let carouselUrls = Array.isArray(data.carouselImages) && data.carouselImages.length
           ? data.carouselImages
           : (Array.isArray(data.images) && data.images.length > 1 ? data.images.slice(1) : [])
+        carouselUrls = carouselUrls.filter((u) => u && u !== coverUrl)
         const coverFileList = coverUrl
           ? [{ uid: '-cover', url: coverUrl, name: 'cover.jpg', status: 'done' }]
           : []
@@ -168,6 +194,8 @@ function HotelEdit() {
           name: `gallery-${i}.jpg`,
           status: 'done',
         }))
+        // 优先用 data.roomTypes（数组，含 image）回填，这样刷新后房型图能显示；否则再解析 roomTypesSummary
+        const roomTypesSource = Array.isArray(data.roomTypes) && data.roomTypes.length ? data.roomTypes : data.roomTypesSummary
         form.setFieldsValue({
           name: data.name ?? '',
           nameEn: data.nameEn ?? '',
@@ -176,7 +204,7 @@ function HotelEdit() {
           star: data.star ?? data.starLevel ?? 5,
           openedAt: data.openedAt ? dayjs(data.openedAt) : undefined,
           basePrice: data.basePrice,
-          roomTypesList: parseRoomTypesFromDetail(data.roomTypesSummary ?? data.roomTypes),
+          roomTypesList: parseRoomTypesFromDetail(roomTypesSource),
           facilities: formatFacilitiesForForm(data.facilities),
           tags: formatTagsForForm(data.tags),
           cover: coverFileList,
@@ -207,33 +235,40 @@ function HotelEdit() {
   /** 从表单项 file 中取可上传的 File（Antd 可能在 originFileObj） */
   const getFile = (item) => item?.originFileObj ?? item
 
+  /** 在页面内预览图片，避免 blob 被浏览器当成链接打开或跳到搜索引擎 */
+  const handlePreview = (file) => {
+    const url = file.url ?? file.thumbUrl
+    if (url) setPreviewImage({ open: true, url })
+  }
+
   const handleFinish = async (values) => {
     setLoading(true)
-    const hide = message.loading(isEdit ? '正在提交更新…' : '正在提交审核…', 0)
+    let hide = message.loading(isEdit ? '正在提交更新…' : '正在提交审核…', 0)
     try {
       const coverList = Array.isArray(values.cover) ? values.cover : []
       const galleryList = Array.isArray(values.gallery) ? values.gallery : []
+      const roomTypesList = Array.isArray(values.roomTypesList) ? values.roomTypesList : []
+      const hasAnyImage = coverList.length > 0 || galleryList.length > 0 || roomTypesList.some((r) => Array.isArray(r?.roomImage) && r.roomImage.length > 0)
+      if (hasAnyImage) {
+        hide()
+        hide = message.loading('正在上传图片…', 0)
+      }
+
       let coverImage = undefined
       const carouselImages = []
-
       if (coverList.length) {
         const first = coverList[0]
-        const url = first?.url
         const file = getFile(first)
-        if (url && typeof url === 'string') coverImage = url
-        else if (file instanceof File) {
-          coverImage = await uploadImage(file)
-        }
+        if (isHttpUrl(first?.url)) coverImage = first.url
+        else if (file instanceof File) coverImage = await uploadImage(file)
       }
       for (let i = 0; i < galleryList.length; i++) {
         const item = galleryList[i]
-        const url = item?.url
         const file = getFile(item)
-        if (url && typeof url === 'string') carouselImages.push(url)
+        if (isHttpUrl(item?.url)) carouselImages.push(item.url)
         else if (file instanceof File) carouselImages.push(await uploadImage(file))
       }
 
-      const roomTypesList = Array.isArray(values.roomTypesList) ? values.roomTypesList : []
       const roomImageUrls = []
       for (let i = 0; i < roomTypesList.length; i++) {
         const list = roomTypesList[i]?.roomImage
@@ -242,21 +277,26 @@ function HotelEdit() {
           continue
         }
         const first = list[0]
-        const url = first?.url
         const file = getFile(first)
-        if (url && typeof url === 'string') roomImageUrls.push(url)
+        if (isHttpUrl(first?.url)) roomImageUrls.push(first.url)
         else if (file instanceof File) roomImageUrls.push(await uploadImage(file))
         else roomImageUrls.push(undefined)
       }
 
-      const payload = buildPayload(values, { coverImage, carouselImages })
+      if (hasAnyImage) {
+        hide()
+        hide = message.loading(isEdit ? '正在提交更新…' : '正在提交审核…', 0)
+      }
+
+      const payload = buildPayload(values, { coverImage, carouselImages, roomTypeImages: roomImageUrls })
       if (import.meta.env.DEV) {
-        console.log('[HotelEdit] 提交请求体 nameEn/city/roomTypes/coverImage/carouselImages:', {
+        console.log('[HotelEdit] 提交请求体 nameEn/city/roomTypes/coverImage/carouselImages/roomTypeImages:', {
           nameEn: payload.nameEn,
           city: payload.city,
           roomTypes: payload.roomTypes,
           coverImage: payload.coverImage,
           carouselImages: payload.carouselImages,
+          roomTypeImages: payload.roomTypeImages,
         })
       }
       if (isEdit) {
@@ -266,33 +306,44 @@ function HotelEdit() {
         message.success('已提交更新并重新进入审核流程；管理员审核后状态会更新。')
         const data = await fetchHotelDetail(id)
         if (data) {
+          // 若 PUT 的 roomTypeImages 未落库（如后端暂无 rooms），用 PATCH 按房型再传一次，保证房型图能显示
           const apiRooms = Array.isArray(data.roomTypes) ? data.roomTypes : []
-          for (let i = 0; i < apiRooms.length && i < roomImageUrls.length; i++) {
-            const roomId = apiRooms[i]?.id
-            const url = roomImageUrls[i]
-            if (roomId != null && url) await updateRoomImages(id, roomId, { imageUrls: [url] })
+          if (apiRooms.length && roomImageUrls.some(Boolean)) {
+            for (let i = 0; i < apiRooms.length && i < roomImageUrls.length; i++) {
+              const roomId = apiRooms[i]?.id
+              const url = roomImageUrls[i]
+              if (roomId != null && url) await updateRoomImages(id, roomId, { imageUrls: [url] })
+            }
+            // PATCH 后重新拉详情，保证回填和刷新后能看到房型图
+            const refetched = await fetchHotelDetail(id)
+            if (refetched) Object.assign(data, refetched)
           }
           setDetail(data)
           const cityVal = (data.cityName != null && String(data.cityName).trim())
             ? String(data.cityName).trim()
             : (data.city != null && typeof data.city === 'object' ? (data.city.name ?? data.city) : (data.city != null ? String(data.city) : ''))
-          const parsedRoomTypes = parseRoomTypesFromDetail(data.roomTypesSummary ?? data.roomTypes)
+          const roomTypesSource = Array.isArray(data.roomTypes) && data.roomTypes.length ? data.roomTypes : data.roomTypesSummary
+          const parsedRoomTypes = parseRoomTypesFromDetail(roomTypesSource)
           const hasRoomTypesFromApi =
             parsedRoomTypes.length > 0 &&
             parsedRoomTypes.some((r) => (r.name && r.name.trim()) || r.price != null)
           const coverUrl = data.coverImage ?? (Array.isArray(data.images) && data.images[0] ? data.images[0] : null)
-          const carouselUrls = Array.isArray(data.carouselImages) && data.carouselImages.length
+          let carouselUrls = Array.isArray(data.carouselImages) && data.carouselImages.length
             ? data.carouselImages
             : (Array.isArray(data.images) && data.images.length > 1 ? data.images.slice(1) : [])
+          carouselUrls = carouselUrls.filter((u) => u && u !== coverUrl)
           const coverFileList = coverUrl
             ? [{ uid: '-cover', url: coverUrl, name: 'cover.jpg', status: 'done' }]
             : (coverImage ? [{ uid: '-cover', url: coverImage, name: 'cover.jpg', status: 'done' }] : [])
           const galleryFileList = carouselUrls.length
             ? carouselUrls.map((url, i) => ({ uid: `gallery-${i}`, url, name: `gallery-${i}.jpg`, status: 'done' }))
             : (carouselImages?.length ? carouselImages.map((url, i) => ({ uid: `gallery-${i}`, url, name: `gallery-${i}.jpg`, status: 'done' })) : [])
+          // 回填时优先用本次上传的房型图 URL；无则用详情里的 roomTypes[].image，保证刷新后也能看见
           const mergedRoomTypes = (hasRoomTypesFromApi ? parsedRoomTypes : values.roomTypesList?.length ? values.roomTypesList : parsedRoomTypes).map((r, i) => ({
             ...r,
-            roomImage: (r.roomImage && r.roomImage.length) ? r.roomImage : (roomImageUrls[i] ? [{ uid: `room-${i}`, url: roomImageUrls[i], name: 'room.jpg', status: 'done' }] : []),
+            roomImage: roomImageUrls[i]
+              ? [{ uid: `room-${i}`, url: roomImageUrls[i], name: 'room.jpg', status: 'done' }]
+              : (r.roomImage && r.roomImage.length ? r.roomImage : []),
           }))
           form.setFieldsValue({
             name: data.name ?? values.name ?? '',
@@ -311,16 +362,6 @@ function HotelEdit() {
         }
       } else {
         const createResult = await createHotel(payload)
-        const hotelId = createResult?.id ?? createResult?.data?.id
-        if (hotelId && roomImageUrls.some(Boolean)) {
-          const data = await fetchHotelDetail(hotelId)
-          const apiRooms = Array.isArray(data?.roomTypes) ? data.roomTypes : []
-          for (let i = 0; i < apiRooms.length && i < roomImageUrls.length; i++) {
-            const roomId = apiRooms[i]?.id
-            const url = roomImageUrls[i]
-            if (roomId != null && url) await updateRoomImages(hotelId, roomId, { imageUrls: [url] })
-          }
-        }
         hide()
         clearDraft()
         message.success('提交成功，请到「我的酒店」查看审核状态。')
@@ -451,7 +492,12 @@ function HotelEdit() {
             </Col>
             <Col span={8}>
               <Form.Item label="基础参考价（起）" name="basePrice" rules={[{ required: true, message: '请输入基础参考价' }]}>
-                <InputNumber min={0} style={{ width: '100%' }} addonAfter="元/晚" />
+                <Space.Compact style={{ width: '100%' }}>
+                  <InputNumber min={0} style={{ width: '100%' }} />
+                  <span style={{ padding: '0 11px', background: '#fafafa', border: '1px solid #d9d9d9', borderLeft: 0, borderRadius: '0 6px 6px 0', lineHeight: '32px' }}>
+                    元/晚
+                  </span>
+                </Space.Compact>
               </Form.Item>
             </Col>
           </Row>
@@ -475,15 +521,18 @@ function HotelEdit() {
                 }
                 name="cover"
                 valuePropName="fileList"
-                getValueFromEvent={(e) => e?.fileList}
+                getValueFromEvent={(e) => normalizeFileListWithPreview(e?.fileList)}
               >
-                <Upload.Dragger name="files" multiple={false} beforeUpload={() => false}>
-                  <p className="ant-upload-drag-icon">
-                    <UploadOutlined />
-                  </p>
-                  <p className="ant-upload-text">点击或拖拽图片到此处上传</p>
-                  <p className="ant-upload-hint">建议比例接近题目示例，支持 jpg/png</p>
-                </Upload.Dragger>
+                <Upload
+                  listType="picture-card"
+                  accept="image/*"
+                  maxCount={1}
+                  beforeUpload={() => false}
+                  showUploadList={{ showPreviewIcon: true }}
+                  onPreview={handlePreview}
+                >
+                  <div><UploadOutlined /><br />上传封面</div>
+                </Upload>
               </Form.Item>
             </Col>
             <Col span={16}>
@@ -498,15 +547,18 @@ function HotelEdit() {
                 }
                 name="gallery"
                 valuePropName="fileList"
-                getValueFromEvent={(e) => e?.fileList}
+                getValueFromEvent={(e) => normalizeFileListWithPreview(e?.fileList)}
               >
-                <Upload.Dragger name="files" multiple beforeUpload={() => false}>
-                  <p className="ant-upload-drag-icon">
-                    <UploadOutlined />
-                  </p>
-                  <p className="ant-upload-text">点击或拖拽多张图片上传</p>
-                  <p className="ant-upload-hint">可上传多张，前端将按照顺序展示轮播图</p>
-                </Upload.Dragger>
+                <Upload
+                  listType="picture-card"
+                  accept="image/*"
+                  multiple
+                  beforeUpload={() => false}
+                  showUploadList={{ showPreviewIcon: true }}
+                  onPreview={handlePreview}
+                >
+                  <div><UploadOutlined /><br />上传轮播图</div>
+                </Upload>
               </Form.Item>
             </Col>
           </Row>
@@ -564,11 +616,17 @@ function HotelEdit() {
                         </Form.Item>
                       </Col>
                       <Col span={24}>
-                        <Form.Item {...restField} name={[name, 'roomImage']} label="房型图" valuePropName="fileList" getValueFromEvent={(e) => e?.fileList}>
-                          <Upload.Dragger name="file" multiple={false} beforeUpload={() => false} maxCount={1}>
-                            <p className="ant-upload-drag-icon"><UploadOutlined /></p>
-                            <p className="ant-upload-text">点击或拖拽一张图片上传（用于该房型展示）</p>
-                          </Upload.Dragger>
+                        <Form.Item {...restField} name={[name, 'roomImage']} label="房型图" valuePropName="fileList" getValueFromEvent={(e) => normalizeFileListWithPreview(e?.fileList)}>
+                          <Upload
+                            listType="picture-card"
+                            accept="image/*"
+                            maxCount={1}
+                            beforeUpload={() => false}
+                            showUploadList={{ showPreviewIcon: true }}
+                            onPreview={handlePreview}
+                          >
+                            <div><UploadOutlined /><br />上传房型图</div>
+                          </Upload>
                         </Form.Item>
                       </Col>
                     </Row>
@@ -705,6 +763,19 @@ function HotelEdit() {
         <Paragraph>
           当前表单存在尚未提交审核的修改。你可以选择直接离开，或者先将当前内容保存为本地草稿，以便下次继续编辑。
         </Paragraph>
+      </Modal>
+
+      <Modal
+        open={previewImage.open}
+        title="图片预览"
+        footer={null}
+        onCancel={() => setPreviewImage({ open: false, url: '' })}
+        width="auto"
+        styles={{ body: { textAlign: 'center' } }}
+      >
+        {previewImage.url && (
+          <img src={previewImage.url} alt="预览" style={{ maxWidth: '100%', maxHeight: '70vh', display: 'block', margin: '0 auto' }} />
+        )}
       </Modal>
     </div>
   )

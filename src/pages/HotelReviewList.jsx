@@ -350,27 +350,77 @@ function HotelReviewList() {
                   : '-'}
             </Descriptions.Item>
             <Descriptions.Item label="房型">
-              {detailDrawer.detail.roomTypesSummary && String(detailDrawer.detail.roomTypesSummary).trim()
-                ? detailDrawer.detail.roomTypesSummary
-                : Array.isArray(detailDrawer.detail.roomTypes) && detailDrawer.detail.roomTypes.length
-                  ? detailDrawer.detail.roomTypes.map((r) => `${r.name || '房型'} ¥${r.price ?? '-'}`).join('；')
-                  : '-'}
+              {Array.isArray(detailDrawer.detail.roomTypes) && detailDrawer.detail.roomTypes.length ? (
+                <Table
+                  size="small"
+                  pagination={false}
+                  dataSource={detailDrawer.detail.roomTypes.map((r, i) => ({ ...r, key: r.id ?? i }))}
+                  columns={[
+                    { title: '房型', dataIndex: 'name', key: 'name', render: (t) => t || '-' },
+                    { title: '价格', dataIndex: 'price', key: 'price', render: (v) => (v != null ? `¥${v}` : '-') },
+                    { title: '床型', dataIndex: 'bedType', key: 'bedType', render: (t) => t || '-' },
+                    { title: '人数', dataIndex: 'capacity', key: 'capacity', render: (v) => v ?? '-' },
+                    {
+                      title: '图片',
+                      key: 'image',
+                      width: 72,
+                      render: (_, r) => {
+                        // 按接口约定仅展示房型主图：roomTypes[i].image
+                        // 若历史数据里有 imageUrl 字段，则兼容读取，但不再从 images[0] 回退，避免把酒店轮播图误当成房型图
+                        const url = r.image ?? r.imageUrl
+                        return url ? (
+                          <a href={url} target="_blank" rel="noreferrer">
+                            <img src={url} alt="" style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 4 }} />
+                          </a>
+                        ) : (
+                          '-'
+                        )
+                      },
+                    },
+                  ]}
+                />
+              ) : detailDrawer.detail.roomTypesSummary && String(detailDrawer.detail.roomTypesSummary).trim() ? (
+                detailDrawer.detail.roomTypesSummary
+              ) : (
+                '-'
+              )}
             </Descriptions.Item>
             <Descriptions.Item label="图片">
               {(() => {
                 const d = detailDrawer.detail || {}
-                const fromImages = Array.isArray(d.images) ? d.images : []
-                const fromCoverAndCarousel = [
-                  d.coverImage,
-                  ...(Array.isArray(d.carouselImages) ? d.carouselImages : []),
-                ].filter(Boolean)
-                const imgs = fromImages.length ? fromImages : fromCoverAndCarousel
-                if (!imgs.length) return '-'
+                // 优先使用后端约定的统一图片列表：images 或 carouselImages，其次才用 coverImage
+                let all = []
+                if (Array.isArray(d.images) && d.images.length) {
+                  all = d.images
+                } else if (Array.isArray(d.carouselImages) && d.carouselImages.length) {
+                  all = d.carouselImages
+                } else if (d.coverImage) {
+                  all = [d.coverImage]
+                }
+                // 去重，避免 coverImage 同时出现在 images/carouselImages 里导致重复展示
+                const uniq = []
+                const seen = new Set()
+                for (const url of all) {
+                  if (!url || seen.has(url)) continue
+                  seen.add(url)
+                  uniq.push(url)
+                }
+                if (!uniq.length) return '-'
                 return (
-                  <Space wrap>
-                    {imgs.map((url, i) => (
-                      <a key={i} href={url} target="_blank" rel="noreferrer">
-                        图{i + 1}
+                  <Space wrap size="small">
+                    {uniq.map((url, i) => (
+                      <a key={i} href={url} target="_blank" rel="noreferrer" title={`图${i + 1}`}>
+                        <img
+                          src={url}
+                          alt={`酒店图${i + 1}`}
+                          style={{
+                            width: i === 0 ? 120 : 64,
+                            height: i === 0 ? 80 : 64,
+                            objectFit: 'cover',
+                            borderRadius: 4,
+                            display: 'block',
+                          }}
+                        />
                       </a>
                     ))}
                   </Space>

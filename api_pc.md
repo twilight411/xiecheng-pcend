@@ -287,6 +287,7 @@ PC 端带 token 时返回统一结构，便于用 `data` 展示列表：
   | openedAt   | string   | 否   | 开业日期 `YYYY-MM-DD`                    |
   | basePrice  | number   | 否   | 基础房价（起）                            |
   | roomTypes  | string   | 否   | 房型说明（文本）                           |
+  | roomTypeImages | (string\|null)[] | 否   | 房型主图 URL 数组，与 roomTypes 解析后的房型顺序一致，第 i 个为第 i 个房型的主图（一张），null/空表示不更新该房型图；不传则不改动房型图。一次提交即可落库，无需再调 PATCH 房型图。 |
   | highlights | string   | 否   | 周边亮点（文本）                           |
   | coverImage | string   | 否   | 封面图 URL（一张）；与 carouselImages 二选一或与 images 兼容 |
   | carouselImages | string[] | 否   | 轮播图 URL 数组（不含封面）；与 images 二选一 |
@@ -310,6 +311,7 @@ PC 端带 token 时返回统一结构，便于用 `data` 展示列表：
   **说明**
 
   - 新建酒店默认状态为 `pending`（待审核），不会出现在移动端对外售卖列表。
+  - **roomTypeImages**：房型主图 URL 数组（与 roomTypes 解析顺序一致），POST 时一并提交即可写入各房型 `room_photos`，无需再调 PATCH 房型图。
 
 ### 2.3 更新酒店
 
@@ -324,6 +326,7 @@ PC 端带 token 时返回统一结构，便于用 `data` 展示列表：
 **请求体**
 
   - 与创建时字段相同，支持部分字段更新；未传字段保持不变。
+  - **roomTypeImages**：房型主图 URL 数组（与房型顺序一致），PUT 时一并提交即可写入 `room_photos`，无需再调 PATCH 房型图。
   - 图片可传 `coverImage`（封面）+ `carouselImages`（轮播数组），或 `images`（第一张为封面）。传任一项则整体覆盖酒店图片；不传任何图片字段则保留原图。图片 URL 建议先通过 **POST /api/upload/image** 上传获得。
   - **facilities** / **amenities**：传则覆盖酒店设施列表（可传空数组或空字符串清空）。
   - **tags**：传则覆盖酒店标签关联（可传空数组或空字符串清空）；每项为标签名称或 code，后端按 tags 表匹配。
