@@ -1,7 +1,7 @@
 import { Button, Card, ConfigProvider, Form, Input, Radio, Typography, message } from 'antd'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { isPublicDemoMode, ensurePublicDemoAuth } from '../config/publicDemo.js'
+import { isPublicDemoMode } from '../config/publicDemo.js'
 import { register as registerApi } from '../services/auth.js'
 import { USER_ROLES } from '../constants/index.js'
 import loginBg from '../assets/登录注册背景.png'
@@ -14,8 +14,7 @@ function Register() {
 
   useEffect(() => {
     if (!isPublicDemoMode()) return
-    ensurePublicDemoAuth()
-    navigate('/merchant/hotels', { replace: true })
+    navigate('/login', { replace: true })
   }, [navigate])
 
   const handleFinish = async (values) => {

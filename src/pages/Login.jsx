@@ -1,7 +1,7 @@
-import { Alert, Button, Card, ConfigProvider, Form, Input, Typography } from 'antd'
-import { useEffect, useState } from 'react'
+import { Alert, Button, Card, ConfigProvider, Form, Input, Radio, Typography } from 'antd'
+import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { isPublicDemoMode, ensurePublicDemoAuth } from '../config/publicDemo.js'
+import { isPublicDemoMode, persistGuestDemoSession } from '../config/publicDemo.js'
 import { login } from '../services/auth.js'
 import { USER_ROLES } from '../constants/index.js'
 import loginBg from '../assets/登录注册背景.png'
@@ -9,20 +9,29 @@ import loginBg from '../assets/登录注册背景.png'
 const { Title, Text } = Typography
 
 function Login() {
+  const demo = isPublicDemoMode()
   const [loading, setLoading] = useState(false)
   const [loginError, setLoginError] = useState('')
   const navigate = useNavigate()
-
-  useEffect(() => {
-    if (!isPublicDemoMode()) return
-    ensurePublicDemoAuth()
-    navigate('/merchant/hotels', { replace: true })
-  }, [navigate])
 
   const handleFinish = async (values) => {
     setLoginError('')
     setLoading(true)
     try {
+      if (demo) {
+        persistGuestDemoSession({
+          username: values.username,
+          role: values.role,
+        })
+        const role = values.role === USER_ROLES.ADMIN ? USER_ROLES.ADMIN : USER_ROLES.MERCHANT
+        if (role === USER_ROLES.ADMIN) {
+          navigate('/admin/review', { replace: true })
+        } else {
+          navigate('/merchant/hotels', { replace: true })
+        }
+        return
+      }
+
       const data = await login({ username: values.username, password: values.password })
       const role = data?.user?.role ?? USER_ROLES.MERCHANT
       if (role === 'admin') {
@@ -59,6 +68,9 @@ function Login() {
           Form: {
             labelColor: '#ffffff', // ✨ 专门设置表单 Label 颜色
           },
+          Radio: {
+            colorPrimary: '#FFB300',
+          },
         },
       }}
     >
@@ -78,7 +90,7 @@ function Login() {
       >
         <Card
           style={{
-            width: 400,
+            width: 440,
             backdropFilter: 'blur(14px)',
             backgroundColor: 'rgba(255, 255, 255, 0.18)',
             borderColor: 'rgba(255, 255, 255, 0.45)',
@@ -88,6 +100,14 @@ function Login() {
           <Title level={3} style={{ textAlign: 'center', marginBottom: 24, color: '#fff' }}>
             易宿酒店管理后台 - 登录
           </Title>
+          {demo && (
+            <Alert
+              type="info"
+              showIcon
+              message="作品演示：用户名和密码可随意填写或留空，请选择角色后点「登录」即可浏览对应界面。"
+              style={{ marginBottom: 16, textAlign: 'left' }}
+            />
+          )}
           {loginError && (
             <Alert
               type="error"
@@ -98,13 +118,33 @@ function Login() {
               onClose={() => setLoginError('')}
             />
           )}
-          <Form layout="vertical" onFinish={handleFinish}>
-            <Form.Item label="用户名" name="username" rules={[{ required: true, message: '请输入用户名' }]}>
-              <Input placeholder="请输入用户名" />
+          <Form
+            layout="vertical"
+            onFinish={handleFinish}
+            initialValues={demo ? { role: USER_ROLES.MERCHANT } : {}}
+          >
+            <Form.Item
+              label="用户名"
+              name="username"
+              rules={demo ? [] : [{ required: true, message: '请输入用户名' }]}
+            >
+              <Input placeholder={demo ? '可留空或随便填' : '请输入用户名'} allowClear />
             </Form.Item>
-            <Form.Item label="密码" name="password" rules={[{ required: true, message: '请输入密码' }]}>
-              <Input.Password placeholder="请输入密码" />
+            <Form.Item
+              label="密码"
+              name="password"
+              rules={demo ? [] : [{ required: true, message: '请输入密码' }]}
+            >
+              <Input.Password placeholder={demo ? '可留空或随便填' : '请输入密码'} allowClear />
             </Form.Item>
+            {demo && (
+              <Form.Item label="进入作品（角色）" name="role" rules={[{ required: true, message: '请选择角色' }]}>
+                <Radio.Group>
+                  <Radio value={USER_ROLES.MERCHANT}>商户端（酒店列表与编辑）</Radio>
+                  <Radio value={USER_ROLES.ADMIN}>管理员端（审核后台）</Radio>
+                </Radio.Group>
+              </Form.Item>
+            )}
             <Form.Item>
               <Button
                 type="primary"
@@ -128,4 +168,3 @@ function Login() {
 }
 
 export default Login
-

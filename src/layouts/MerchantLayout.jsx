@@ -1,6 +1,6 @@
 import { Layout, Space, Typography, message } from 'antd'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { isPublicDemoMode, ensurePublicDemoAuth } from '../config/publicDemo.js'
+import { isPublicDemoMode } from '../config/publicDemo.js'
 import { clearStoredAuth, getStoredUser } from '../services/auth.js'
 
 const { Header, Content } = Layout
@@ -22,15 +22,11 @@ function MerchantLayout() {
   }
 
   const handleLogout = () => {
-    if (isPublicDemoMode()) {
-      clearStoredAuth()
-      ensurePublicDemoAuth()
-      navigate('/merchant/hotels', { replace: true })
-      message.info('演示模式：已恢复访客浏览')
-      return
-    }
     clearStoredAuth()
-    navigate('/login')
+    if (isPublicDemoMode()) {
+      message.info('已退出，可在登录页重新选择角色浏览')
+    }
+    navigate('/login', { replace: true })
   }
 
   return (
