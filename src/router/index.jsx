@@ -1,4 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { isPublicDemoMode } from '../config/publicDemo.js'
 import Login from '../pages/Login.jsx'
 import Register from '../pages/Register.jsx'
 import HotelEdit from '../pages/HotelEdit.jsx'
@@ -34,8 +35,11 @@ export function AppRouter() {
         {/* 兼容旧地址，暂时保留直达编辑页 */}
         <Route path="/hotel/edit" element={<HotelEdit />} />
 
-        {/* 默认跳到登录页，后续可按登录态调整 */}
-        <Route path="*" element={<Navigate to="/login" replace />} />
+        {/* 演示部署直达商户端；本地开发仍进登录页 */}
+        <Route
+          path="*"
+          element={<Navigate to={isPublicDemoMode() ? '/merchant/hotels' : '/login'} replace />}
+        />
       </Routes>
     </BrowserRouter>
   )
